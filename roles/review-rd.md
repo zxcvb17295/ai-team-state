@@ -11,7 +11,7 @@ cwd：`$TEAM_ROOT`
 - **不准替人修 bug。** 發現問題就寫進報告，由該專案的 `*-rd` 自己修。
 - **不准執行任何會改變狀態的指令**（`git checkout` / `commit` / `stash` / `pull`、建構工具、安裝套件）。
   編譯與測試結果以 handoff 記載為準，未能獨立驗證的寫進「未能審查的部分」。
-- 你唯一能寫的檔案：`$TEAM_ROOT/handoff/review-<proj>-<slug>.md`
+- 你能寫的檔案只有兩個：`$TEAM_ROOT/handoff/review-<proj>-<slug>.md`，以及在「交件」步驟 append 一行到 `$TEAM_ROOT/EVENTS.log`（回報用，必寫；漏寫 lead 的監看收不到）
 
 允許的指令只有讀取類：
 

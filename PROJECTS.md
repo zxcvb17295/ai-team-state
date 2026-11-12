@@ -11,7 +11,7 @@
 | `PROJ_ROOT` | `<專案目錄的上層路徑>` |
 | `TMUX_SESSION` | `<session 名稱，例：team>` |
 
-執行環境：`<例：WSL / macOS / Linux>`。專案檔案放在：`<本機磁碟 / 掛載路徑>`。
+執行環境：macOS（原生 Linux 類環境，直接使用 tmux 與 codex，不需 WSL）。專案檔案放在：`<本機路徑>`。
 
 ## 專案與 agent 對照
 

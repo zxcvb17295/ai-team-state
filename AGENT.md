@@ -22,7 +22,7 @@ export TMUX_SESSION=<session 名稱>
 
 **開工順序**
 
-1. 確認 `tmux`、`codex` 可用（`tmux -V`、`codex --version`）。不在 PATH 就先解決環境，不要硬跑。
+1. 確認 `tmux`、`codex` 可用（`tmux -V`、`codex --version`）。不在 PATH 就先解決環境，不要硬跑。**tmux 需 3.2 以上**（2.2 的 `-e` 參數要用）。
 2. `ls $PROJ_ROOT` 確認 PROJECTS.md 列的專案目錄都在。不在就問使用者，**不要自己猜或自己 clone**。
 3. `tmux list-windows -t $TMUX_SESSION 2>/dev/null` 看現有 agent；`tail -30 $TEAM_ROOT/EVENTS.log` 看上次進度。
 4. **向使用者確認本次 issue／分支／涉及專案**，再依第 2 節派工。

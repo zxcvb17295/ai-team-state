@@ -1,6 +1,8 @@
 # 審查：review-<proj>-<slug>
 
-> 由 `review-rd` 填寫。唯讀審查，**不替人改程式**。
+> 由 `review-rd` 以最後回覆輸出、`bin/review` 寫入檔案。唯讀審查，**不替人改程式**。
+> 第 2 輪起只輸出「## 第 N 輪」一節（含本範本各小節），會 append 在前一輪之後。
+> **最後一行固定為**：`RESULT: PASS|FAIL <N> Blocker <M> Major <K> Minor`
 
 | 項目 | 內容 |
 |------|------|
@@ -16,11 +18,12 @@
 | 來源 | 內容 |
 |------|------|
 | handoff | 宣稱改了什麼 |
-| `git -C <cwd> status --short` | 實際動到的檔案 |
-| `git -C <cwd> diff` | 實際差異 |
+| 任務書「派工基準」 | base commit、派工前已存在的改動（不算本任務） |
+| `git --no-optional-locks status --short` | 實際動到的檔案 |
+| `git diff <base commit>` | 實際差異 |
 | 專案規範 | role 檔「專案硬規範」與 PROJECTS.md 的規範庫 |
 
-**handoff 與實際 diff 不一致要明寫**（漏報檔案、多改檔案都算 Major 以上）。
+**handoff 與實際 diff 不一致要明寫**（漏報檔案、多改檔案都算 Major 以上）。派工前就存在的改動不算。
 
 ## Blocker
 
@@ -51,3 +54,5 @@
 缺乏資訊、需要執行環境才能判斷的，老實列出。
 
 - 例：實際效能無法靜態判斷，建議上線前實測
+
+RESULT: FAIL 1 Blocker 0 Major 2 Minor

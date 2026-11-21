@@ -1,18 +1,31 @@
-# 任務書：<proj>-<slug>
+# 任務書：{{PROJ}}-{{SLUG}}
 
-> lead 填寫。agent 只看得到這份文件，沒寫到的東西 agent 就不知道。
+> lead 用 `bin/new-task` 建立後填寫。agent 只看得到這份文件，沒寫到的東西 agent 就不知道。
 > 每個欄位都要填，不確定的寫「未定，請在 handoff 寫出卡點並回報 BLOCKED」。
 
 ## 基本資訊
 
 | 項目 | 內容 |
 |------|------|
-| 負責 agent | `<proj>-rd` |
-| 專案 cwd | `$PROJ_ROOT/<專案目錄>` |
-| 分支 | `<branch-name>`（已存在 / 需自行建立：擇一寫明） |
-| slug | `<slug>`（任務簡稱，不含專案前綴） |
-| 模型 | `<codex 模型，啟動前由使用者指定>` |
+| 狀態 | 進行中 ／ 審查中 ／ 退回修正 ／ 結案（lead 維護；結案後移到 `tasks/done/`） |
+| 負責 agent | `{{PROJ}}-rd` |
+| 專案 cwd | `{{PROJ_ROOT}}/{{PROJ_DIR}}` |
+| 分支 | `{{BRANCH}}`（已由 lead／使用者切好，**不准 checkout 或建立分支**） |
+| slug | `{{SLUG}}` |
+| 模型 | `{{MODEL}}` |
 | issue | `#<id>` 或 N/A |
+| 建立時間 | {{DATE}} |
+
+## 派工基準
+
+review 以此為基準判斷哪些改動是本任務造成的。**不要修改本節。**
+
+- base commit：`{{BASE_HEAD}}`
+- 派工前已存在的未提交改動（不屬於本任務，不要碰；若任務必須改到這些檔案，先回報 BLOCKED）：
+
+```
+{{BASE_STATUS}}
+```
 
 ## 目的與背景
 
@@ -33,8 +46,9 @@
 
 ## 必讀文件
 
+- 專案 role：`{{TEAM_STATE}}/roles/{{PROJ}}-rd.md`
 - 專案架構規範：`<路徑>`（見 PROJECTS.md）
-- 專案自帶：`<cwd>/AGENTS.md`（若存在）
+- 專案自帶：`{{PROJ_ROOT}}/{{PROJ_DIR}}/AGENTS.md`（若存在）
 - 名詞定義：`<路徑>`（若有）。**程式註解、訊息、文件的用詞以它為準，lead 派工前先核對**
 - 其他：
 
@@ -50,8 +64,8 @@
 - 不准升級／新增依賴版本
 - 不准修改共用基底類別
 - 不准碰其他專案的程式碼。需要別的專案配合 → 寫進 handoff「跨專案需求」
-- **只改工作區，不 `git commit` / `push`**
-- **任務書裡要 agent 跑的 git 指令，一律限定檔案路徑**（`git diff -- <檔案>`），避免掃整個專案卡住
+- **只改工作區，不 `git add` / `commit` / `checkout` / `stash` / `push`**
+- **要跑的 git 指令一律限定檔案路徑**（`git diff -- <檔案>`），避免掃整個專案卡住
 - （專案特定限制，lead 依 PROJECTS.md 補充）
 
 ## 跨專案契約（如有）
@@ -76,18 +90,24 @@ Response: <欄位>
 
 ## 產出
 
-handoff 檔：`$TEAM_ROOT/handoff/<proj>-rd-<slug>.md`（格式見 `handoff/_TEMPLATE-rd.md`）
+handoff 檔：`{{TEAM_STATE}}/handoff/{{PROJ}}-rd-{{SLUG}}.md`（格式見 `{{TEAM_ROOT}}/templates/handoff-rd.md`）
 
-## 完成後回報
+## 回報（EVENTS.log）
+
+讀完本任務書、開始動手前：
 
 ```bash
-echo "$(date '+%F %T') DONE <proj>-rd <slug> handoff/<proj>-rd-<slug>.md <一句話摘要>" \
-  >> <TEAM_ROOT 的絕對路徑>/EVENTS.log
+'{{TEAM_ROOT}}/bin/event' START {{PROJ}}-rd {{PROJ}} {{SLUG}} - 已讀任務書，開始
+```
+
+完成後：
+
+```bash
+'{{TEAM_ROOT}}/bin/event' DONE {{PROJ}}-rd {{PROJ}} {{SLUG}} handoff/{{PROJ}}-rd-{{SLUG}}.md <一句話摘要>
 ```
 
 卡住時：
 
 ```bash
-echo "$(date '+%F %T') BLOCKED <proj>-rd <slug> <卡在哪>" \
-  >> <TEAM_ROOT 的絕對路徑>/EVENTS.log
+'{{TEAM_ROOT}}/bin/event' BLOCKED {{PROJ}}-rd {{PROJ}} {{SLUG}} handoff/{{PROJ}}-rd-{{SLUG}}.md <卡在哪>
 ```

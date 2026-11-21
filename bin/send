@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# bin/send — 送一行訊息給 agent，Enter 分開送，並確認真的送出
+#
+#   bin/send <agent> <訊息...>
+#
+# 長內容請寫成檔案，再送「請讀 <絕對路徑>」。訊息裡的路徑要寫絕對路徑。
+# 確認方式：畫面出現 WORKING_PATTERN。沒出現就補送一次 Enter；仍沒有就 exit 1。
+
+. "$(dirname "$0")/_lib.sh"
+
+[ $# -ge 2 ] || die "用法：bin/send <agent> <訊息...>"
+agent="$1"; shift
+msg="$*"
+window_exists "$agent" || die "找不到 window：$TMUX_SESSION:$agent"
+# 送到 shell 會被當指令執行；送到信任提示的 Enter 會替使用者按下「信任」
+pane_is_shell "$agent" && die "$agent 的 codex 已退出（window 在 shell），不送訊息。請看 bin/peek $agent"
+pane_waiting_on "$agent" "$TRUST_PATTERN" && die "$agent 停在信任提示，不送訊息。這需要使用者決定"
+
+tmux send-keys -t "$TMUX_SESSION:$agent" -l "$msg"
+sleep 1
+tmux send-keys -t "$TMUX_SESSION:$agent" Enter
+
+if "$TEAM_ROOT/bin/wait-pane" "$agent" "$WORKING_PATTERN" 8 >/dev/null 2>&1; then
+  echo "已送出，agent 工作中"
+  exit 0
+fi
+
+# Enter 可能被吃掉：補一次
+tmux send-keys -t "$TMUX_SESSION:$agent" Enter
+if "$TEAM_ROOT/bin/wait-pane" "$agent" "$WORKING_PATTERN" 8; then
+  echo "已送出（補送 Enter 後），agent 工作中"
+  exit 0
+fi
+
+echo "未確認送出：請用 bin/peek $agent 檢查（訊息是否停在輸入框、是否停在核准畫面）" >&2
+exit 1

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# bin/peek — 看 agent 畫面（去掉空行）
+#
+#   bin/peek <agent> [行數=30]      # 只看可見區
+#   bin/peek <agent> 200            # 行數 > 可見區時往回抓捲動歷史
+
+. "$(dirname "$0")/_lib.sh"
+
+[ $# -ge 1 ] || die "用法：bin/peek <agent> [行數]"
+agent="$1" lines="${2:-30}"
+window_exists "$agent" || die "找不到 window：$TMUX_SESSION:$agent"
+
+tmux capture-pane -p -S "-$lines" -t "$TMUX_SESSION:$agent" | grep -v '^[[:space:]]*$' | tail -n "$lines"

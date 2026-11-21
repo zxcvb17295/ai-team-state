@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# bin/wait-pane — 等 agent 畫面出現某字樣（取代文件裡的固定 sleep）
+#
+#   bin/wait-pane <agent> <regex> [timeout 秒=30]
+#
+# 出現：exit 0 並印出畫面尾端。逾時：exit 1 並印出畫面尾端。
+
+. "$(dirname "$0")/_lib.sh"
+
+[ $# -ge 2 ] || die "用法：bin/wait-pane <agent> <regex> [timeout]"
+agent="$1" pattern="$2" timeout="${3:-30}"
+window_exists "$agent" || die "找不到 window：$TMUX_SESSION:$agent"
+
+i=0
+while [ "$i" -lt "$timeout" ]; do
+  if pane "$agent" | grep -Eq -- "$pattern"; then
+    pane "$agent" | grep -v '^[[:space:]]*$' | tail -15
+    exit 0
+  fi
+  sleep 1
+  i=$((i + 1))
+done
+
+echo "逾時 ${timeout}s：畫面未出現 /$pattern/" >&2
+pane "$agent" | grep -v '^[[:space:]]*$' | tail -15
+exit 1

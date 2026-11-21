@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# bin/new-task — 從範本建立任務書，並記錄派工前的 git 基準
+#
+#   bin/new-task <proj> <專案目錄名> <slug>
+#   → $TEAM_STATE/tasks/<proj>-<slug>.md
+#
+# 分支必須在派工前由 lead / 使用者切好；agent 不准 checkout。
+
+. "$(dirname "$0")/_lib.sh"
+need_state
+need_proj_root
+
+[ $# -eq 3 ] || die "用法：bin/new-task <proj> <專案目錄名> <slug>"
+proj="$1" dir="$2" slug="$3"
+
+case "$slug" in
+  "$proj"-*) die "slug 不要含專案前綴：$slug" ;;
+  *[!a-z0-9-]*) die "slug 請用 kebab-case（a-z0-9-）：$slug" ;;
+esac
+
+cwd="$PROJ_ROOT/$dir"
+[ -d "$cwd" ] || die "專案目錄不存在：$cwd"
+[ -f "$TEAM_STATE/roles/$proj-rd.md" ] || die "找不到 role：$TEAM_STATE/roles/$proj-rd.md（先跑 bin/new-role）"
+
+branch="$(git -C "$cwd" rev-parse --abbrev-ref HEAD)"
+head="$(git -C "$cwd" rev-parse HEAD)"
+status="$(git -C "$cwd" --no-optional-locks status --short)"
+
+dest="$TEAM_STATE/tasks/$proj-$slug.md"
+render "$TEAM_ROOT/templates/task.md" "$dest" \
+  "PROJ=$proj" "PROJ_DIR=$dir" "SLUG=$slug" "BRANCH=$branch" "BASE_HEAD=$head" \
+  "MODEL=${DEFAULT_MODEL:-（派工前由使用者指定）}" "DATE=$(date '+%F %T')"
+
+# 多行內容（派工前已存在的改動）用 awk 換掉佔位行
+tmp="$dest.tmp"
+STATUS="${status:-（乾淨）}" awk '
+  /\{\{BASE_STATUS\}\}/ { print ENVIRON["STATUS"]; next } { print }
+' "$dest" > "$tmp" && mv "$tmp" "$dest"
+
+echo "$dest"
+[ -z "$status" ] || warn "工作區派工前就有未提交改動，已記進任務書「派工基準」；review 會排除這些檔案。"

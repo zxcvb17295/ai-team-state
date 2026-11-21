@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# bin/watch — 監看所有開發 agent，有需要 lead 處理的事就結束（請用背景執行）
+#
+#   bin/watch [timeout 秒=1800]
+#
+# 結束條件（印出第一行為事件類型）：
+#   EVENT     EVENTS.log 出現新的 DONE / BLOCKED
+#   APPROVAL  某個 *-rd 停在核准畫面（APPROVAL_PATTERN）
+#   EXITED    某個 *-rd 的 codex 已退出回 shell（沙箱拒絕、當掉…）
+#   TRUST     某個 *-rd 停在「Trust this folder?」：必須問使用者
+#   TIMEOUT   逾時；附上各 agent 畫面最後一行，lead 判斷後再重開 watch
+# 啟動時就已存在的 APPROVAL / EXITED 也會立刻回報：處理完再重開 watch。
+
+. "$(dirname "$0")/_lib.sh"
+need_state
+
+timeout="${1:-1800}"
+interval=5
+start_lines="$(wc -l < "$EVENTS" | tr -d ' ')"
+elapsed=0
+
+agents() {
+  tmux list-windows -t "$TMUX_SESSION" -F '#{window_name}' 2>/dev/null | grep -- '-rd$' || true
+}
+
+while :; do
+  new="$(tail -n "+$((start_lines + 1))" "$EVENTS" | grep -E '^[0-9-]+ [0-9:]+ (DONE|BLOCKED) ' || true)"
+  if [ -n "$new" ]; then
+    echo "EVENT"
+    echo "$new"
+    exit 0
+  fi
+
+  for a in $(agents); do
+    if pane_is_shell "$a"; then
+      echo "EXITED $a"
+      pane "$a" | grep -v '^[[:space:]]*$' | tail -15
+      exit 0
+    fi
+    if pane_waiting_on "$a" "$TRUST_PATTERN"; then
+      echo "TRUST $a"
+      pane "$a" | grep -v '^[[:space:]]*$' | tail -15
+      exit 0
+    fi
+    if pane_waiting_on "$a" "$APPROVAL_PATTERN"; then
+      echo "APPROVAL $a"
+      pane "$a" | grep -v '^[[:space:]]*$' | tail -25
+      exit 0
+    fi
+  done
+
+  if [ "$elapsed" -ge "$timeout" ]; then
+    echo "TIMEOUT ${timeout}s"
+    for a in $(agents); do
+      echo "== $a: $(pane "$a" | grep -v '^[[:space:]]*$' | tail -1)"
+    done
+    exit 0
+  fi
+
+  sleep "$interval"
+  elapsed=$((elapsed + interval))
+done

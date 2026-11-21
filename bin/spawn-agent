@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# bin/spawn-agent — 開（或在原 window 重開）一個開發 agent，並直接帶入 role 與任務書
+#
+#   bin/spawn-agent <proj> <專案目錄名> <模型> <slug>
+#
+# - agent 名稱固定為 <proj>-rd，window 名稱同名。
+# - session 不存在：用第一個 agent 直接建立 session（不會留下空的預設 window）。
+# - window 已存在且 codex 已退出回 shell：在同一 window 重開（保留目錄設定）。
+# - window 已存在且 codex 仍在跑：拒絕。
+# - 啟動後等待最多 30 秒，印出畫面。看到 Trust this folder? 時，lead 必須先問使用者。
+
+. "$(dirname "$0")/_lib.sh"
+need_state
+need_proj_root
+
+[ $# -eq 4 ] || die "用法：bin/spawn-agent <proj> <專案目錄名> <模型> <slug>"
+proj="$1" dir="$2" model="$3" slug="$4"
+agent="$proj-rd"
+cwd="$PROJ_ROOT/$dir"
+role="$TEAM_STATE/roles/$agent.md"
+task="$TEAM_STATE/tasks/$proj-$slug.md"
+
+[ -n "$model" ] || die "未指定模型（必須先問使用者，不可省略）"
+[ -d "$cwd" ]   || die "專案目錄不存在：$cwd"
+[ -f "$role" ]  || die "找不到 role：$role"
+[ -f "$task" ]  || die "找不到任務書：$task"
+command -v "$CODEX_BIN" >/dev/null || die "找不到 codex：$CODEX_BIN"
+
+prompt_file="$TEAM_STATE/.logs/$agent.prompt"
+mkdir -p "$TEAM_STATE/.logs"
+cat > "$prompt_file" <<EOF
+請先閱讀 ${role}，並全程遵守其中規範。
+讀完後接著讀任務書 $task 並依指示執行。
+EOF
+
+# tmux window 的 shell 不會繼承本行程的環境，TEAM_ENV 要明確帶入
+launch="TEAM_ENV='$TEAM_ENV' '$TEAM_ROOT/bin/_codex-tui' '$model' '$prompt_file'"
+
+if ! tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+  tmux new-session -d -s "$TMUX_SESSION" -n "$agent" -c "$cwd"
+elif window_exists "$agent"; then
+  pane_is_shell "$agent" || die "window $agent 的 codex 仍在執行。同一任務進行中不重開；要重開請先讓 codex 結束（AGENT.md §2.7）"
+  echo "window $agent 已存在且在 shell，於原 window 重開"
+  tmux send-keys -t "$TMUX_SESSION:$agent" -l "cd '$cwd'"
+  tmux send-keys -t "$TMUX_SESSION:$agent" Enter
+else
+  tmux new-window -d -t "$TMUX_SESSION" -n "$agent" -c "$cwd"
+fi
+
+tmux send-keys -t "$TMUX_SESSION:$agent" -l "$launch"
+tmux send-keys -t "$TMUX_SESSION:$agent" Enter
+
+echo "已啟動 ${agent}（模型 ${model}），等待畫面…"
+"$TEAM_ROOT/bin/wait-pane" "$agent" "$WORKING_PATTERN|$TRUST_PATTERN|Ignoring --add-dir|$APPROVAL_PATTERN" 30 || true
+
+if pane_waiting_on "$agent" "$TRUST_PATTERN"; then
+  echo ""
+  echo "NEED_USER_TRUST ${agent}：codex 詢問是否信任 ${cwd}。"
+  echo "這是使用者的安全決定：lead 必須先問使用者，同意後才送 Enter。本腳本未送出任何按鍵。"
+  exit 3
+fi

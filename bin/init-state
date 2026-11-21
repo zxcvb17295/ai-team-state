@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# bin/init-state — 建立 TEAM_STATE 目錄結構（可重複執行，不覆蓋既有檔案）
+#
+#   bin/init-state
+
+. "$(dirname "$0")/_lib.sh"
+
+mkdir -p "$TEAM_STATE/roles" "$TEAM_STATE/tasks/done" "$TEAM_STATE/handoff" "$TEAM_STATE/.logs"
+touch "$EVENTS"
+
+if [ ! -e "$TEAM_STATE/PROJECTS.md" ]; then
+  render "$TEAM_ROOT/templates/PROJECTS.md" "$TEAM_STATE/PROJECTS.md"
+  echo "已建立 $TEAM_STATE/PROJECTS.md（請填寫）"
+fi
+
+# 防呆：TEAM_STATE 若在某個 git repo 裡，必須被忽略
+if git -C "$TEAM_STATE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  if git -C "$TEAM_STATE" check-ignore -q "$EVENTS"; then
+    echo "TEAM_STATE 位於 git repo 內，但已被 .gitignore 忽略：OK"
+  else
+    warn "TEAM_STATE 位於 git repo $(git -C "$TEAM_STATE" rev-parse --show-toplevel) 內且未被忽略。請移到 repo 外，或加進 .gitignore。"
+    exit 1
+  fi
+fi
+
+echo "TEAM_STATE = $TEAM_STATE"

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# bin/new-role — 從範本建立某專案的開發 agent role 檔
+#
+#   bin/new-role <proj> <專案目錄名>
+#   → $TEAM_STATE/roles/<proj>-rd.md
+
+. "$(dirname "$0")/_lib.sh"
+need_state
+
+[ $# -eq 2 ] || die "用法：bin/new-role <proj> <專案目錄名>"
+proj="$1" dir="$2"
+
+dest="$TEAM_STATE/roles/$proj-rd.md"
+render "$TEAM_ROOT/templates/role-rd.md" "$dest" "PROJ=$proj" "PROJ_DIR=$dir"
+echo "$dest"

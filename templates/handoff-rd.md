@@ -1,6 +1,7 @@
 # handoff：<proj>-rd-<slug>
 
-> 由 `<proj>-rd` 填寫。被 review 退回修正時**更新本檔**，不要新增檔案；在「修正紀錄」追加一節。
+> 由 `<proj>-rd` 寫到 `$TEAM_STATE/handoff/<proj>-rd-<slug>.md`。被 review 退回修正時**更新本檔**，不要新增檔案；在「修正紀錄」追加一節。
+> 寫完 handoff 才回報 DONE。
 
 | 項目 | 內容 |
 |------|------|

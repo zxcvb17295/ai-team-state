@@ -3,7 +3,7 @@
 適用：lead 在使用者**明確要求 commit** 時使用（見 AGENT.md §3.3）。`*-rd` 與 `review-rd` 不 commit。
 適用範圍：`ai-team-state` 本身。各專案的 commit **沿用該專案原本的格式**（動手前先看 `git log --format=%B -5`）。
 
-署名行（`Co-Authored-By` 等）：`<由使用者決定：加 / 不加>`。
+署名行（`Co-Authored-By` 等）：**不加**（使用者決定，2026-11-21）。
 
 ## 格式
 
@@ -33,7 +33,7 @@
 
 ## scope（非必要）
 
-用括號包住，必須是描述該程式部分的**名詞**。本倉庫建議：`agent`、`roles`、`tasks`、`handoff`。
+用括號包住，必須是描述該程式部分的**名詞**。本倉庫建議：`agent`、`roles`、`templates`、`bin`。
 
 ## description（必要）
 

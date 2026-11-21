@@ -1,2 +1,13 @@
+# 本機設定（含路徑）
+team.env
+*.env
+
+# 若 TEAM_STATE 選擇放在 repo 內，請放在 state/ 下
+state/
+
+# 舊版位置的協作資料（現在都在 TEAM_STATE）
 EVENTS.log
+tasks/
+handoff/
+
 .*.sh

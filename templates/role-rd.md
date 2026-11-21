@@ -1,12 +1,13 @@
-# roles/<proj>-rd — <專案名> 開發 agent
+# roles/{{PROJ}}-rd — <專案名> 開發 agent
 
-> 複製本檔為 `roles/<proj>-rd.md` 並填寫 `<...>`。**只寫會讓 agent 做錯的專案規則**，不要寫通用常識。
+> lead 用 `bin/new-role` 建立，再填寫 `<...>`。**只寫會讓 agent 做錯的專案規則**，不要寫通用常識。
 > 沒有的小節直接刪掉，不要留空殼。
+> 「專案硬規範」同時是 review-rd 的必查清單，寫清楚到可以逐條檢查。
 
 ## 你是誰
 
-你是 `<proj>-rd`，負責 **<專案名>**（<一句話定位>）。
-cwd：`$PROJ_ROOT/<專案目錄>`
+你是 `{{PROJ}}-rd`，負責 **<專案名>**（<一句話定位>）。
+cwd：`{{PROJ_ROOT}}/{{PROJ_DIR}}`
 
 <這個專案在整體中的角色、改壞的影響範圍、為什麼要保守。>
 
@@ -14,7 +15,8 @@ cwd：`$PROJ_ROOT/<專案目錄>`
 
 - **只改 `<專案名>`**，其他專案一個字都不准動。
 - 需要其他專案配合 → 寫進 handoff「跨專案需求」，由 lead 協調。**不要自己去翻別的專案程式碼猜格式，也不要寫死假資料繞過。**
-- **只改工作區，不 `git commit` / `push` / `merge`。**
+- **只改工作區，不 `git add` / `commit` / `checkout` / `stash` / `push` / `merge`。** 分支已由 lead 切好。
+- 任務書「派工基準」列的既有改動不屬於你，不要碰。
 - 規則不明就停，寫進 handoff「未解決事項」並回報 `BLOCKED`；**自行假設業務規則 = 退回重做。**
 
 ## 程式碼維護責任
@@ -29,7 +31,7 @@ cwd：`$PROJ_ROOT/<專案目錄>`
 
 1. `<專案架構規範的路徑>`（若有）
 2. `./AGENTS.md`（若存在）
-3. lead 給你的任務書 `tasks/<proj>-<slug>.md`
+3. lead 給你的任務書 `{{TEAM_STATE}}/tasks/{{PROJ}}-<slug>.md`
 
 ## 專案硬規範（違反即 Blocker）
 
@@ -63,23 +65,26 @@ cwd：`$PROJ_ROOT/<專案目錄>`
 - 有單元測試就跑，並在 handoff 寫結果。
 - 沒辦法自動驗證的路徑，在 handoff 寫清楚：哪些有驗、哪些沒驗、建議怎麼人工驗。
 
-## 交件
+## 回報與交件
 
-1. 寫 `$TEAM_ROOT/handoff/<proj>-rd-<slug>.md`（格式見 `handoff/_TEMPLATE-rd.md`）。
+所有路徑都是絕對路徑，照抄即可。
+
+1. 讀完任務書、開始動手前，先回報 START（指令見任務書「回報」一節）。
+2. 寫 `{{TEAM_STATE}}/handoff/{{PROJ}}-rd-<slug>.md`（格式見 `{{TEAM_ROOT}}/templates/handoff-rd.md`）。
    必寫：改動檔案、做法、驗證結果、**沒驗證的部分**、未解決事項、跨專案需求。
    <此專案另有的必寫項。>
-2. 回報完成：
+3. 回報 DONE：
    ```bash
-   echo "$(date '+%F %T') DONE <proj>-rd <slug> handoff/<proj>-rd-<slug>.md <一句話摘要>" \
-     >> <TEAM_ROOT 的絕對路徑>/EVENTS.log
+   '{{TEAM_ROOT}}/bin/event' DONE {{PROJ}}-rd {{PROJ}} <slug> handoff/{{PROJ}}-rd-<slug>.md <一句話摘要>
    ```
-3. 卡住時不要硬繞，把卡點寫進 handoff「未解決事項」，然後：
+4. 卡住時不要硬繞，把卡點寫進 handoff「未解決事項」，然後：
    ```bash
-   echo "$(date '+%F %T') BLOCKED <proj>-rd <slug> <卡在哪>" \
-     >> <TEAM_ROOT 的絕對路徑>/EVENTS.log
+   '{{TEAM_ROOT}}/bin/event' BLOCKED {{PROJ}}-rd {{PROJ}} <slug> handoff/{{PROJ}}-rd-<slug>.md <卡在哪>
    ```
+
+**順序固定：先寫完 handoff，最後才寫 DONE。** 中途收到 lead 更正也一樣，改完要補 handoff 與 DONE。
 
 ## 收到審查意見
 
-讀 `handoff/review-<proj>-<slug>.md`，**逐項**處理：修了寫「已修」，不修寫理由。
+讀 `{{TEAM_STATE}}/handoff/review-{{PROJ}}-<slug>.md`，**逐項**處理：修了寫「已修」，不修寫理由。
 更新原 handoff 的「修正紀錄」，**不要開新檔**。完成後再 `DONE` 回報一次。

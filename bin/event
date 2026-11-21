@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# bin/event — append 一行到 EVENTS.log（agent 與 lead 共用，確保格式一致）
+#
+#   bin/event START   <agent> <proj> <slug> <檔案|-> <摘要...>
+#   bin/event DONE    <agent> <proj> <slug> <檔案|-> <摘要...>
+#   bin/event BLOCKED <agent> <proj> <slug> <檔案|-> <卡在哪...>
+#
+# review-rd 的 DONE 摘要開頭固定是 PASS 或 FAIL（由 bin/review 代寫）。
+
+. "$(dirname "$0")/_lib.sh"
+need_state
+
+[ $# -ge 6 ] || die "用法：bin/event <START|DONE|BLOCKED> <agent> <proj> <slug> <檔案|-> <摘要...>"
+case "$1" in START|DONE|BLOCKED) ;; *) die "事件類型只能是 START / DONE / BLOCKED：$1" ;; esac
+
+# 摘要裡的換行壓成空白，確保一事件一行
+line="$(date '+%F %T') $(printf '%s ' "$@" | tr '\r\n' '  ' | sed 's/ *$//')"
+printf '%s\n' "$line" >> "$EVENTS"
+echo "$line"

@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# bin/review — 以唯讀沙箱跑一次 review-rd（codex exec -s read-only），請用背景執行
+#
+#   bin/review <proj> <專案目錄名> <slug> <模型> [輪次=1]
+#
+# - 每次審查都是全新的 codex（第 2 輪起會先讀上一輪報告），由沙箱保證唯讀、不會出現核准畫面。
+# - 報告取自 codex 的最後回覆（-o）：第 1 輪建立 review 檔，第 2 輪起 append 到同一檔。
+# - 結束後由本腳本代寫 EVENTS.log：DONE review-rd <proj> <slug> <檔> PASS|FAIL …；失敗寫 BLOCKED。
+# - codex 的完整輸出存在 $TEAM_STATE/.logs/review-<proj>-<slug>-r<N>.log
+
+. "$(dirname "$0")/_lib.sh"
+need_state
+need_proj_root
+
+[ $# -ge 4 ] || die "用法：bin/review <proj> <專案目錄名> <slug> <模型> [輪次]"
+proj="$1" dir="$2" slug="$3" model="$4" round="${5:-1}"
+[ -n "$model" ] || die "未指定模型"
+
+cwd="$PROJ_ROOT/$dir"
+task="$TEAM_STATE/tasks/$proj-$slug.md"
+handoff="$TEAM_STATE/handoff/$proj-rd-$slug.md"
+role="$TEAM_STATE/roles/$proj-rd.md"
+report="$TEAM_STATE/handoff/review-$proj-$slug.md"
+report_rel="handoff/review-$proj-$slug.md"
+log="$TEAM_STATE/.logs/review-$proj-$slug-r$round.log"
+out="$TEAM_STATE/.logs/review-$proj-$slug-r$round.out.md"
+
+for f in "$task" "$handoff" "$role"; do [ -f "$f" ] || die "找不到：$f"; done
+[ -d "$cwd" ] || die "專案目錄不存在：$cwd"
+if [ "$round" = 1 ]; then
+  [ ! -e "$report" ] || die "第 1 輪但 review 檔已存在：${report}（第 2 輪起請指定輪次）"
+else
+  [ -f "$report" ] || die "第 $round 輪但找不到前一輪報告：$report"
+fi
+
+prev=""
+[ "$round" = 1 ] || prev="- 前幾輪審查報告：${report}（先讀它，本輪只輸出「第 $round 輪」一節）"
+
+prompt="$(cat <<EOF
+請先閱讀 $TEAM_ROOT/roles/review-rd.md，並全程遵守其中規範。然後執行一次審查：
+
+- 審查輪次：第 $round 輪
+- 專案：${proj}，專案目錄：$cwd
+- 任務書：${task}（含「派工基準」：base commit 與派工前已存在的改動）
+- 開發 agent 的 handoff：$handoff
+- 專案 role（含專案硬規範）：$role
+- 報告格式：$TEAM_ROOT/templates/handoff-review.md
+$prev
+
+你在唯讀沙箱裡，不能寫任何檔案。報告請直接作為你的最後一則回覆輸出（完整 Markdown），
+最後一行必須是：RESULT: PASS|FAIL <N> Blocker <M> Major <K> Minor
+EOF
+)"
+
+mkdir -p "$TEAM_STATE/.logs"
+rm -f "$out"
+echo "審查中：$proj $slug 第 $round 輪（模型 ${model}），log：$log"
+
+set +e
+"$CODEX_BIN" exec -m "$model" -s read-only -C "$cwd" -o "$out" "$prompt" </dev/null >"$log" 2>&1
+rc=$?
+set -e
+
+if [ "$rc" -ne 0 ] || [ ! -s "$out" ]; then
+  "$TEAM_ROOT/bin/event" BLOCKED review-rd "$proj" "$slug" - "codex exec 失敗 rc=${rc}，見 .logs/$(basename "$log")"
+  exit 1
+fi
+
+result="$(grep -E '^RESULT: (PASS|FAIL)' "$out" | tail -1 | sed 's/^RESULT: //')"
+if [ -z "$result" ]; then
+  result="UNKNOWN 報告缺 RESULT 行，請 lead 人工判讀"
+fi
+
+if [ "$round" = 1 ]; then
+  cp "$out" "$report"
+else
+  { printf '\n\n---\n\n'; cat "$out"; } >> "$report"
+fi
+
+"$TEAM_ROOT/bin/event" DONE review-rd "$proj" "$slug" "$report_rel" "$result"

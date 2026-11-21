@@ -38,6 +38,8 @@ Claude Code 不能在前景 `sleep`；需要等待一律用 `bin/wait-pane`（�
 
 見 `$TEAM_STATE/PROJECTS.md`。每個 `<proj>-rd` **只改自己那一個專案**。跨專案需求由你協調，不准 agent 越界。
 
+**新增專案**：專案目錄必須是 `$PROJ_ROOT` 底下的 git repo（派工基準與 review 都靠 git）。`TEAM_ROOT` 本身與包含 `TEAM_STATE` 的目錄**不可登記為專案**：agent 對專案有寫入權限，等於能改任務書與審查報告。在 PROJECTS.md 加一列 → `bin/new-role <proj> <目錄名>` → 向使用者問清楚會讓 agent 做錯的規則，填進該 role 的「專案硬規範」。
+
 ### 專案專屬限制（編譯方式、資料庫、規範庫…）
 
 寫在 `$TEAM_STATE/PROJECTS.md` 與各 `$TEAM_STATE/roles/<proj>-rd.md`。派工時要把相關限制**抄進任務書**，agent 只看得到你寫的東西。

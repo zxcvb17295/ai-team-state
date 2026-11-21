@@ -30,7 +30,23 @@ bin/init-state                      # 建立 TEAM_STATE 與 PROJECTS.md
 bin/new-role <proj> <專案目錄名>     # 每個專案一次，填寫其「專案硬規範」
 ```
 
-之後依 AGENT.md §0 開工。看 agent 畫面：`tmux -L <TMUX_SOCKET> attach -t <TMUX_SESSION>`。
+之後依 AGENT.md §0 開工。
+
+## 用 skill 啟動（任何目錄都可）
+
+`skills/ai-team/SKILL.md` 是 Claude Code 的手動 skill。連到個人 skill 目錄後，在任何目錄開 Claude Code 都能用：
+
+```bash
+ln -s "$PWD/skills/ai-team" ~/.claude/skills/ai-team    # 你的 ~/.claude/skills 若是連到別處，就連進那個目錄
+```
+
+```
+/ai-team                         # 回報現況
+/ai-team 加專案 <目錄、建構方式、定位…>
+/ai-team <需求>                   # 派工
+```
+
+看 agent 畫面：`tmux -L <TMUX_SOCKET> attach -t <TMUX_SESSION>`。
 
 ## 腳本
 

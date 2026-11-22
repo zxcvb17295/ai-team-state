@@ -5,12 +5,17 @@
 
 . "$(dirname "$0")/_lib.sh"
 
-mkdir -p "$TEAM_STATE/roles" "$TEAM_STATE/tasks/done" "$TEAM_STATE/handoff" "$TEAM_STATE/.logs"
+mkdir -p "$TEAM_STATE/roles" "$TEAM_STATE/verify" "$TEAM_STATE/tasks/done" "$TEAM_STATE/handoff" "$TEAM_STATE/.logs"
 touch "$EVENTS"
 
 if [ ! -e "$TEAM_STATE/PROJECTS.md" ]; then
   render "$TEAM_ROOT/templates/PROJECTS.md" "$TEAM_STATE/PROJECTS.md"
   echo "已建立 $TEAM_STATE/PROJECTS.md（請填寫）"
+fi
+
+if [ ! -e "$TEAM_STATE/LESSONS.md" ]; then
+  render "$TEAM_ROOT/templates/LESSONS.md" "$TEAM_STATE/LESSONS.md"
+  echo "已建立 $TEAM_STATE/LESSONS.md"
 fi
 
 # 防呆：TEAM_STATE 若在某個 git repo 裡，必須被忽略

@@ -55,4 +55,11 @@
 
 - 例：實際效能無法靜態判斷，建議上線前實測
 
+## 教訓
+
+這次的 Blocker／Major 裡，哪些是「role 的專案硬規範或任務書沒寫清楚」造成的？寫出建議補進去的規則（一句話＋放哪裡）。
+沒有就寫「無」。lead 會整理進 `$TEAM_STATE/LESSONS.md`。
+
+- 例：建議 role「專案硬規範」新增：所有 DAO 查詢必須帶 `tenant_id`（本輪 Blocker 1 的成因）
+
 RESULT: FAIL 1 Blocker 0 Major 2 Minor

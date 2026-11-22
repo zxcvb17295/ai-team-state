@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# bin/fingerprint — 比對目前工作區與交件／驗證／審查時的指紋（結案前必跑）
+#
+#   bin/fingerprint <proj> <slug>
+#
+# 印出：目前工作區、<proj>-rd 最後一次 DONE、verify 與 review-rd 最後一次結果各自的 fp。
+# exit 0：目前工作區 = 最後一次 DONE，且 verify、review 若有結果也是同一個 fp。
+# exit 1：任一個不同（DONE 後工作區又被改過，或驗證／審查的不是最後交件的版本）。
+
+. "$(dirname "$0")/_lib.sh"
+need_state
+
+[ $# -eq 2 ] || die "用法：bin/fingerprint <proj> <slug>"
+proj="$1" slug="$2"
+task="$(task_file "$proj" "$slug")"
+[ -f "$task" ] || die "找不到任務書：$task"
+cwd="$(task_cwd "$task")" base="$(task_base "$task")"
+[ -n "$cwd" ] && [ -n "$base" ] || die "任務書缺「專案 cwd」或「base commit」：$task"
+
+cur="$(work_fp "$cwd" "$base")" || die "算不出目前工作區指紋：$cwd"
+done_fp="$(last_event_fp DONE "$proj-rd" "$proj" "$slug")"
+verify_fp="$(last_event_fp DONE verify "$proj" "$slug")"
+review_fp="$(last_event_fp DONE review-rd "$proj" "$slug")"
+
+result() {  # 最後一筆該 agent 的 DONE 摘要開頭（PASS/FAIL…）
+  grep -E "^[0-9-]+ [0-9:]+ DONE $1 $proj $slug " "$EVENTS" 2>/dev/null | tail -1 | awk '{print $8}'
+}
+
+printf '%-10s %s\n' "current" "$cur"
+printf '%-10s %s\n' "rd DONE" "${done_fp:-（無）}"
+printf '%-10s %s %s\n' "verify" "${verify_fp:-（無）}" "$(result verify)"
+printf '%-10s %s %s\n' "review" "${review_fp:-（無）}" "$(result review-rd)"
+
+ok=1
+[ "$cur" = "$done_fp" ] || { echo "MISMATCH：目前工作區與 $proj-rd 最後一次 DONE 不同（DONE 後又改過，或 DONE 沒帶 fp）"; ok=0; }
+[ -z "$verify_fp" ] || [ "$verify_fp" = "$cur" ] || { echo "MISMATCH：verify 跑的不是目前的工作區"; ok=0; }
+[ -z "$review_fp" ] || [ "$review_fp" = "$cur" ] || { echo "MISMATCH：review 審的不是目前的工作區"; ok=0; }
+
+[ "$ok" = 1 ] && echo "OK：工作區與最後一次交件一致" && exit 0
+exit 1

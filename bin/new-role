@@ -3,6 +3,7 @@
 #
 #   bin/new-role <proj> <專案目錄名>
 #   → $TEAM_STATE/roles/<proj>-rd.md
+#   → $TEAM_STATE/verify/<proj>.sh（bin/verify 用的編譯與測試腳本；已存在就沿用）
 
 . "$(dirname "$0")/_lib.sh"
 need_state
@@ -13,3 +14,11 @@ proj="$1" dir="$2"
 dest="$TEAM_STATE/roles/$proj-rd.md"
 render "$TEAM_ROOT/templates/role-rd.md" "$dest" "PROJ=$proj" "PROJ_DIR=$dir"
 echo "$dest"
+
+verify="$TEAM_STATE/verify/$proj.sh"
+if [ -e "$verify" ]; then
+  echo "${verify}（已存在，沿用）"
+else
+  render "$TEAM_ROOT/templates/verify.sh" "$verify" "PROJ=$proj"
+  echo "${verify}（填好編譯與測試指令後，lead 讀過再跑 bin/verify $proj --approve）"
+fi

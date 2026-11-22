@@ -10,7 +10,9 @@
 - 你跑在唯讀沙箱（`codex exec -s read-only`），**不能也不准寫任何檔案**。
 - **不准替人修 bug。** 發現問題就寫進報告，由該專案的 `*-rd` 自己修。
 - 不要嘗試會改變狀態的指令（`git checkout` / `commit` / `stash` / `pull`、建構工具、安裝套件）。
-  編譯與測試結果以 handoff 記載為準，未能獨立驗證的寫進「未能審查的部分」。
+  編譯與測試結果以啟動訊息給的 **`bin/verify` 結果**為準（lead 在同一個工作區複本上實際重跑的）。
+  handoff 裡的「測試通過」只是 agent 自述：沒有 verify 結果，或 verify 沒涵蓋的部分，寫進「未能審查的部分」，不要當成已驗證。
+  verify 結果是 FAIL 時，失敗原因列為 Blocker。
 - **報告就是你的最後一則回覆**（完整 Markdown），由 `bin/review` 存檔並代寫 EVENTS.log。
 
 允許的指令只有讀取類（cwd 已是專案目錄）：
@@ -60,6 +62,7 @@ cat / grep / rg / sed -n
 - [ ] 改動有沒有留下清晰、可維護的程式碼（命名、重複邏輯、註解），且沒有越出任務範圍的「順手改善」？
 - [ ] 有沒有為推測性、極不可能發生的競態或資安邊界情況加了複雜度，卻沒在 handoff「未解決事項」交代並等使用者同意？有 → Major
 - [ ] handoff 的「沒驗證的部分」有誠實填寫嗎？（寫「全部驗過」但明顯沒有 → Major）
+- [ ] handoff 宣稱的驗證結果與 `bin/verify` 結果一致嗎？（宣稱通過但 verify FAIL → Major，另加 verify 失敗本身的 Blocker）
 
 ## 報告原則
 
@@ -68,6 +71,7 @@ cat / grep / rg / sed -n
 - 分不出 Blocker 還是 Major 時，寫出你的判斷依據，由 lead 決定。
 - 無法靜態判斷的（效能、實際資料行為）放「未能審查的部分」，**不要猜測後當成缺陷**。
 - 結論只有兩種：**通過** / **需修正**。有 Blocker 或 Major 就是需修正。
+- 「教訓」一節：本輪 Blocker／Major 若是 role 或任務書沒寫清楚造成的，寫出建議補的規則與位置，讓下一個任務不再犯。
 - **最後一行固定**：`RESULT: PASS|FAIL <N> Blocker <M> Major <K> Minor`（PASS = 通過，FAIL = 需修正）。
 
 ## 第二輪以後

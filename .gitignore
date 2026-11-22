@@ -11,3 +11,6 @@ tasks/
 handoff/
 
 .*.sh
+
+# bin/verify 登記的驗證腳本 hash（本機）
+.local/

@@ -7,6 +7,9 @@
 # - 報告取自 codex 的最後回覆（-o）：第 1 輪建立 review 檔，第 2 輪起 append 到同一檔。
 # - 結束後由本腳本代寫 EVENTS.log：DONE review-rd <proj> <slug> <檔> PASS|FAIL …；失敗寫 BLOCKED。
 # - codex 的完整輸出存在 $TEAM_STATE/.logs/review-<proj>-<slug>-r<N>.log
+# - 開審前工作區指紋必須等於 <proj>-rd 最後一次 DONE 的 fp，審完再比一次；不符寫 BLOCKED。
+#   DONE 事件帶 fp=，代表這份審查結果只對應這個版本的工作區。
+# - 有同一 fp 的 bin/verify 結果時，一併交給 review-rd 當作編譯與測試的依據。
 
 . "$(dirname "$0")/_lib.sh"
 need_state
@@ -33,6 +36,22 @@ else
   [ -f "$report" ] || die "第 $round 輪但找不到前一輪報告：$report"
 fi
 
+blocked() { "$TEAM_ROOT/bin/event" BLOCKED review-rd "$proj" "$slug" - "$*"; exit 1; }
+
+base="$(task_base "$task")"
+[ -n "$base" ] || die "任務書缺 base commit：$task"
+fp="$(work_fp "$cwd" "$base")" || blocked "算不出工作區指紋：$cwd"
+done_fp="$(last_event_fp DONE "$proj-rd" "$proj" "$slug")"
+[ "$fp" = "$done_fp" ] ||
+  blocked "工作區指紋 $fp 與 $proj-rd 最後一次 DONE 的 fp=${done_fp:-（無）} 不同：DONE 後又改過，先讓 agent 重新交件"
+
+verify_report="$TEAM_STATE/handoff/verify-$proj-$slug.md"
+if [ -f "$verify_report" ] && [ "$(last_event_fp DONE verify "$proj" "$slug")" = "$fp" ]; then
+  verify_line="- lead 重跑的編譯與測試結果（bin/verify，與本次審查同一個工作區）：$verify_report"
+else
+  verify_line="- 沒有對應本次工作區的 bin/verify 結果：handoff 裡的編譯與測試結果只是 agent 自述，請寫進「未能審查的部分」"
+fi
+
 prev=""
 [ "$round" = 1 ] || prev="- 前幾輪審查報告：${report}（先讀它，本輪只輸出「第 $round 輪」一節）"
 
@@ -45,6 +64,7 @@ prompt="$(cat <<EOF
 - 開發 agent 的 handoff：$handoff
 - 專案 role（含專案硬規範）：$role
 - 報告格式：$TEAM_ROOT/templates/handoff-review.md
+$verify_line
 $prev
 
 你在唯讀沙箱裡，不能寫任何檔案。報告請直接作為你的最後一則回覆輸出（完整 Markdown），
@@ -54,7 +74,7 @@ EOF
 
 mkdir -p "$TEAM_STATE/.logs"
 rm -f "$out"
-echo "審查中：$proj $slug 第 $round 輪（模型 ${model}），log：$log"
+echo "審查中：$proj $slug 第 $round 輪（模型 ${model}，fp=${fp}），log：$log"
 
 set +e
 "$CODEX_BIN" exec -m "$model" -s read-only -C "$cwd" -o "$out" "$prompt" </dev/null >"$log" 2>&1
@@ -62,9 +82,12 @@ rc=$?
 set -e
 
 if [ "$rc" -ne 0 ] || [ ! -s "$out" ]; then
-  "$TEAM_ROOT/bin/event" BLOCKED review-rd "$proj" "$slug" - "codex exec 失敗 rc=${rc}，見 .logs/$(basename "$log")"
-  exit 1
+  blocked "codex exec 失敗 rc=${rc}，見 .logs/$(basename "$log")"
 fi
+
+after="$(work_fp "$cwd" "$base" || echo error)"
+[ "$after" = "$fp" ] ||
+  blocked "審查期間工作區有變動（fp $fp → ${after}），本輪報告作廢，見 .logs/$(basename "$out")"
 
 result="$(grep -E '^RESULT: (PASS|FAIL)' "$out" | tail -1 | sed 's/^RESULT: //')"
 if [ -z "$result" ]; then
@@ -77,4 +100,4 @@ else
   { printf '\n\n---\n\n'; cat "$out"; } >> "$report"
 fi
 
-"$TEAM_ROOT/bin/event" DONE review-rd "$proj" "$slug" "$report_rel" "$result"
+"$TEAM_ROOT/bin/event" DONE review-rd "$proj" "$slug" "$report_rel" "$result fp=$fp"

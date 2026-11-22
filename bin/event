@@ -5,7 +5,10 @@
 #   bin/event DONE    <agent> <proj> <slug> <檔案|-> <摘要...>
 #   bin/event BLOCKED <agent> <proj> <slug> <檔案|-> <卡在哪...>
 #
-# review-rd 的 DONE 摘要開頭固定是 PASS 或 FAIL（由 bin/review 代寫）。
+# review-rd / verify 的 DONE 摘要開頭固定是 PASS 或 FAIL（由 bin/review、bin/verify 代寫）。
+#
+# 開發 agent（<proj>-rd）的 DONE 會自動在行尾加上 fp=<工作區指紋>：交件當下的工作區鎖定在這個指紋，
+# bin/review、bin/verify、bin/fingerprint 會拿它比對，DONE 之後工作區再變動就會被擋下。
 
 . "$(dirname "$0")/_lib.sh"
 need_state
@@ -13,7 +16,20 @@ need_state
 [ $# -ge 6 ] || die "用法：bin/event <START|DONE|BLOCKED> <agent> <proj> <slug> <檔案|-> <摘要...>"
 case "$1" in START|DONE|BLOCKED) ;; *) die "事件類型只能是 START / DONE / BLOCKED：$1" ;; esac
 
+fp_tag=""
+if [ "$1" = DONE ] && [ "$2" = "$3-rd" ]; then
+  task="$(task_file "$3" "$4")"
+  cwd="" base="" fp=""
+  if [ -f "$task" ]; then cwd="$(task_cwd "$task")"; base="$(task_base "$task")"; fi
+  if [ -n "$cwd" ] && [ -n "$base" ] && fp="$(work_fp "$cwd" "$base" 2>/dev/null)" && [ -n "$fp" ]; then
+    fp_tag=" fp=$fp"
+  else
+    warn "算不出工作區指紋（任務書 ${task} 缺專案 cwd 或 base commit？），本事件不帶 fp"
+    fp_tag=" fp=unknown"
+  fi
+fi
+
 # 摘要裡的換行壓成空白，確保一事件一行
-line="$(date '+%F %T') $(printf '%s ' "$@" | tr '\r\n' '  ' | sed 's/ *$//')"
+line="$(date '+%F %T') $(printf '%s ' "$@" | tr '\r\n' '  ' | sed 's/ *$//')$fp_tag"
 printf '%s\n' "$line" >> "$EVENTS"
 echo "$line"

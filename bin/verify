@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+# bin/verify — lead 親自重跑編譯與測試，不採信 agent 自己寫的「測試通過」（請用背景執行）
+#
+#   bin/verify <proj> <slug>          # 在交件工作區的乾淨複本裡跑 $TEAM_STATE/verify/<proj>.sh
+#   bin/verify <proj> --approve       # 顯示該腳本內容並登記其 hash（lead 讀過、確認無誤後才做）
+#
+# - 驗證腳本放在 TEAM_STATE，開發 agent 寫得到；所以只跑 hash 已登記在 $TEAM_ROOT/.local/verify-approved 的版本
+#   （TEAM_ROOT 不在 agent 的可寫範圍）。腳本被改過就拒跑，要 lead 重新讀過再 --approve。
+# - 複本：git clone --shared 到暫存目錄，checkout 專案目前的 HEAD，套上工作區 diff 與未追蹤檔案。
+#   原專案目錄完全不寫入。被 .gitignore 忽略的檔案（node_modules、build 輸出）不在複本裡，
+#   腳本可用環境變數 VERIFY_SRC（原專案目錄）自行連結或安裝。
+# - 開跑前工作區指紋必須等於 <proj>-rd 最後一次 DONE 的 fp；跑完再比一次。
+# - 結果寫 $TEAM_STATE/handoff/verify-<proj>-<slug>.md，並代寫 DONE verify <proj> <slug> <檔> PASS|FAIL … fp=…
+#   準備失敗（指紋不符、腳本未登記…）寫 BLOCKED。完整輸出在 $TEAM_STATE/.logs/verify-<proj>-<slug>.log
+
+. "$(dirname "$0")/_lib.sh"
+need_state
+
+approved_file="$TEAM_ROOT/.local/verify-approved"
+
+[ $# -eq 2 ] || die "用法：bin/verify <proj> <slug> | bin/verify <proj> --approve"
+proj="$1"
+script="$TEAM_STATE/verify/$proj.sh"
+[ -f "$script" ] || die "找不到驗證腳本：${script}（bin/new-role 會建立範本）"
+script_hash="$(sha256 < "$script")"
+
+if [ "$2" = "--approve" ]; then
+  echo "==== $script"
+  cat "$script"
+  echo "===="
+  mkdir -p "$(dirname "$approved_file")"
+  touch "$approved_file"
+  grep -v "^$proj " "$approved_file" > "$approved_file.tmp" || true
+  echo "$proj $script_hash" >> "$approved_file.tmp"
+  mv "$approved_file.tmp" "$approved_file"
+  echo "已登記 $proj 的驗證腳本 hash：${script_hash:0:12}"
+  exit 0
+fi
+
+slug="$2"
+blocked() { "$TEAM_ROOT/bin/event" BLOCKED verify "$proj" "$slug" - "$*"; exit 1; }
+
+grep -qx "$proj $script_hash" "$approved_file" 2>/dev/null ||
+  blocked "驗證腳本 verify/$proj.sh 未登記或登記後被改過（hash ${script_hash:0:12}）：lead 讀過內容後跑 bin/verify $proj --approve"
+
+task="$(task_file "$proj" "$slug")"
+[ -f "$task" ] || die "找不到任務書：$task"
+cwd="$(task_cwd "$task")" base="$(task_base "$task")"
+[ -n "$cwd" ] && [ -n "$base" ] || die "任務書缺「專案 cwd」或「base commit」：$task"
+
+fp="$(work_fp "$cwd" "$base")" || blocked "算不出工作區指紋：$cwd"
+done_fp="$(last_event_fp DONE "$proj-rd" "$proj" "$slug")"
+[ "$fp" = "$done_fp" ] ||
+  blocked "工作區指紋 $fp 與 $proj-rd 最後一次 DONE 的 fp=${done_fp:-（無）} 不同：DONE 後又改過，先讓 agent 重新交件"
+
+log="$TEAM_STATE/.logs/verify-$proj-$slug.log"
+report="$TEAM_STATE/handoff/verify-$proj-$slug.md"
+report_rel="handoff/verify-$proj-$slug.md"
+mkdir -p "$TEAM_STATE/.logs" "$TEAM_STATE/handoff"
+
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/aiteam-verify.XXXXXX")"
+trap 'rm -rf "$tmp"' EXIT
+copy="$tmp/src"
+
+# 建複本：目前 HEAD + 工作區對 HEAD 的 diff + 未追蹤檔案
+head="$(git -C "$cwd" rev-parse HEAD)"
+git clone -q --shared --no-checkout "$cwd" "$copy" 2>"$log" || blocked "建立複本失敗，見 .logs/$(basename "$log")"
+git -C "$copy" -c advice.detachedHead=false checkout -q "$head" 2>>"$log" || blocked "複本 checkout 失敗，見 .logs/$(basename "$log")"
+if ! git -C "$cwd" --no-optional-locks diff --binary HEAD | git -C "$copy" apply --binary --allow-empty 2>>"$log"; then
+  blocked "工作區 diff 套用到複本失敗，見 .logs/$(basename "$log")"
+fi
+untracked="$tmp/untracked"
+git -C "$cwd" --no-optional-locks ls-files -o --exclude-standard -z > "$untracked"
+if [ -s "$untracked" ]; then
+  (cd "$cwd" && tar --null -T "$untracked" -cf -) | (cd "$copy" && tar -xf -) ||
+    blocked "未追蹤檔案複製失敗"
+fi
+
+echo "驗證中：$proj ${slug}（fp=${fp}），log：$log"
+set +e
+(cd "$copy" && VERIFY_SRC="$cwd" bash "$script") >>"$log" 2>&1 </dev/null
+rc=$?
+set -e
+
+after="$(work_fp "$cwd" "$base" || echo error)"
+result=PASS
+[ "$rc" -eq 0 ] || result=FAIL
+drift=""
+[ "$after" = "$fp" ] || drift="（注意：驗證期間原工作區有變動，fp ${fp} → ${after}；本結果只代表 ${fp}）"
+
+{
+  echo "# 驗證：verify-$proj-$slug"
+  echo
+  echo "| 項目 | 內容 |"
+  echo "|------|------|"
+  echo "| 結果 | ${result}（exit ${rc}） |"
+  echo "| 時間 | $(date '+%F %T') |"
+  echo "| 工作區 fp | \`$fp\` |"
+  echo "| 驗證腳本 | \`verify/$proj.sh\`（hash \`${script_hash:0:12}\`） |"
+  echo "| 完整 log | \`.logs/$(basename "$log")\` |"
+  [ -z "$drift" ] || echo "| 警告 | $drift |"
+  echo
+  echo "由 bin/verify 在交件工作區的乾淨複本中實際執行，不是 agent 自述。"
+  echo
+  echo "## log 最後 60 行"
+  echo
+  echo '```'
+  tail -60 "$log"
+  echo '```'
+} > "$report"
+
+"$TEAM_ROOT/bin/event" DONE verify "$proj" "$slug" "$report_rel" "$result exit=$rc fp=$fp"

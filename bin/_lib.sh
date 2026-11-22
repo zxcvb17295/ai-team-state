@@ -88,3 +88,41 @@ render() {
   mkdir -p "$(dirname "$dest")"
   sed "$script" "$src" > "$dest"
 }
+
+# ---- 任務書欄位、工作區指紋（bin/event、bin/review、bin/verify、bin/fingerprint 共用）----
+
+task_file() { echo "$TEAM_STATE/tasks/$1-$2.md"; }   # <proj> <slug>
+
+# 從任務書讀專案 cwd（「| 專案 cwd | `路徑` |」那一列）
+task_cwd() {
+  sed -n 's/^| 專案 cwd | `\([^`]*\)`.*/\1/p' "$1" | head -1
+}
+
+# 從任務書讀派工基準的 base commit（「- base commit：`sha`」）
+task_base() {
+  sed -n 's/^- base commit：`\([0-9a-f]\{7,40\}\)`.*/\1/p' "$1" | head -1
+}
+
+sha256() { if command -v shasum >/dev/null; then shasum -a 256; else sha256sum; fi | cut -c1-64; }
+
+# 工作區指紋：HEAD + 相對 base 的 diff（含二進位）+ 未追蹤檔案的路徑與內容 hash。
+# 只讀不寫（--no-optional-locks、hash-object 不帶 -w），唯讀沙箱內也能算。
+# 用法：work_fp <cwd> <base>  → 印出 12 碼 hex
+work_fp() {
+  local cwd="$1" base="$2"
+  {
+    git -C "$cwd" rev-parse HEAD
+    git -C "$cwd" --no-optional-locks diff --binary "$base"
+    git -C "$cwd" --no-optional-locks ls-files -o --exclude-standard -z |
+      while IFS= read -r -d '' f; do
+        printf '%s %s\n' "$f" "$(git -C "$cwd" hash-object -- "$f")"
+      done
+  } | sha256 | cut -c1-12
+}
+
+# 某任務最後一筆「<TYPE> <agent> <proj> <slug>」事件裡的 fp=（沒有就印空字串）
+last_event_fp() {   # <TYPE> <agent> <proj> <slug>
+  [ -f "$EVENTS" ] || return 0
+  grep -E "^[0-9-]+ [0-9:]+ $1 $2 $3 $4 " "$EVENTS" | tail -1 |
+    sed -n 's/.* fp=\([0-9a-f]\{12\}\).*/\1/p'
+}

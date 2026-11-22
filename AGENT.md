@@ -23,7 +23,7 @@
 **所有 tmux／codex 操作都用 `bin/` 腳本**，不要手打 tmux 指令（容易漏參數）。腳本會自己讀 team.env。
 `TMUX_SOCKET` 有值時，agent 跑在獨立的 tmux server（`tmux -L <TMUX_SOCKET>`），與使用者自己的 tmux 分開；不得已要手打 tmux 指令時也必須帶 `-L`。
 **永遠不要執行 `tmux kill-server`**：它會關掉整個 server 上的所有 session。要結束 agent 用 window 層級的操作。
-Claude Code 不能在前景 `sleep`；需要等待一律用 `bin/wait-pane`（前景、短）或背景執行（`bin/watch`、`bin/review`）。
+Claude Code 不能在前景 `sleep`；需要等待一律用 `bin/wait-pane`（前景、短）或背景執行（`bin/watch`、`bin/verify`、`bin/review`）。
 
 **開工順序**
 
@@ -39,6 +39,7 @@ Claude Code 不能在前景 `sleep`；需要等待一律用 `bin/wait-pane`（�
 見 `$TEAM_STATE/PROJECTS.md`。每個 `<proj>-rd` **只改自己那一個專案**。跨專案需求由你協調，不准 agent 越界。
 
 **新增專案**：專案目錄必須是 `$PROJ_ROOT` 底下的 git repo（派工基準與 review 都靠 git）。`TEAM_ROOT` 本身與包含 `TEAM_STATE` 的目錄**不可登記為專案**：agent 對專案有寫入權限，等於能改任務書與審查報告。在 PROJECTS.md 加一列 → `bin/new-role <proj> <目錄名>` → 向使用者問清楚會讓 agent 做錯的規則，填進該 role 的「專案硬規範」。
+`bin/new-role` 同時建立 `$TEAM_STATE/verify/<proj>.sh`：填入 PROJECTS.md 的編譯與測試指令，**向使用者確認內容後**跑 `bin/verify <proj> --approve` 登記（§2.6）。專案真的無法自動編譯或測試時，腳本保留 `exit 2` 範本，並在 PROJECTS.md 註明。
 
 ### 專案專屬限制（編譯方式、資料庫、規範庫…）
 
@@ -52,12 +53,14 @@ Claude Code 不能在前景 `sleep`；需要等待一律用 `bin/wait-pane`（�
 ```
 使用者給 issue
   → lead 切好分支 → bin/new-task 建任務書並填寫 → bin/spawn-agent 派給 <proj>-rd
-  → <proj>-rd 回報 START → 開發 + 自查 → 寫 handoff → 回報 DONE
-  → lead 讀 handoff、抽驗 diff → bin/review（唯讀沙箱，每次新實例）
-  → bin/review 寫 handoff/review-<proj>-<slug>.md、代寫 DONE … PASS|FAIL
+  → <proj>-rd 回報 START → 開發 + 自查 → 寫 handoff → 回報 DONE（自動記下工作區指紋 fp，之後工作區凍結）
+  → lead 讀 handoff、抽驗 diff → bin/verify（lead 親自重跑編譯與測試）
+      └─ verify FAIL → 直接退回原 <proj>-rd，附 verify 報告，不必先 review
+  → bin/review（唯讀沙箱，每次新實例；拿 verify 結果當依據）
+  → bin/review 寫 handoff/review-<proj>-<slug>.md、代寫 DONE … PASS|FAIL … fp=…
   → lead 彙整回報使用者
-      ├─ FAIL（有 Blocker/Major）→ 退回原 <proj>-rd 修正（更新同一份 handoff）→ bin/review 第 2 輪
-      └─ PASS → 結案：任務書狀態改「結案」，移到 tasks/done/
+      ├─ FAIL（有 Blocker/Major）→ 退回原 <proj>-rd 修正（更新同一份 handoff）→ 重新 DONE → verify → review 第 2 輪
+      └─ PASS → bin/fingerprint 確認一致 → 整理教訓（§4.1）→ 結案：任務書狀態改「結案」，移到 tasks/done/
 ```
 
 **review 通過但有 Minor 時的處理原則**（建議）：
@@ -121,9 +124,27 @@ tail -30 $TEAM_STATE/EVENTS.log
 cat $TEAM_STATE/handoff/<proj>-rd-<slug>.md
 ```
 
-### 2.6 審查
+### 2.6 驗證與審查
 
-`*-rd` DONE 後，lead 讀 handoff、抽驗 `git -C <cwd> diff <base commit> --stat`，再以**背景執行**：
+**不採信 agent 自己寫的「測試通過」。** handoff 的驗證結果只是宣稱；以 lead 重跑的結果為準（gstack ETHOS「No self-certification」）。
+
+**工作區指紋（fp）**：`*-rd` 用 `bin/event DONE` 交件時，腳本自動在事件尾端加 `fp=<12 碼>`（HEAD + 對 base 的 diff + 未追蹤檔案）。
+`bin/verify`、`bin/review` 開跑前與跑完都會比對：工作區跟最後一次 DONE 不同就寫 `BLOCKED`、不出結果。
+這樣 PASS 一定對應「最後交件的那個版本」，而不是之後又被改過的工作區。DONE 帶 `fp=unknown` 代表任務書缺欄位，先修任務書再請 agent 重新 DONE。
+
+**1. 驗證**：`*-rd` DONE 後，lead 讀 handoff、抽驗 `git -C <cwd> diff <base commit> --stat`，再以**背景執行**：
+
+```bash
+bin/verify <proj> <slug>
+```
+
+- 在交件工作區的乾淨複本（暫存目錄）跑 `$TEAM_STATE/verify/<proj>.sh`，原專案目錄不寫入；結果寫 `handoff/verify-<proj>-<slug>.md`，代寫 `DONE verify <proj> <slug> <檔> PASS|FAIL exit=N fp=…`。
+- 驗證腳本在 TEAM_STATE，agent 寫得到，所以只跑 lead 登記過 hash 的版本（登記檔在 `$TEAM_ROOT/.local/`，agent 寫不到）。
+  被改過會寫 `BLOCKED … 未登記或登記後被改過`：lead 讀過新內容、確認不是 agent 改的（是就問使用者）再 `bin/verify <proj> --approve`。
+- 複本不含被 .gitignore 忽略的檔案（node_modules、build 輸出）；需要的話在腳本裡安裝或用 `$VERIFY_SRC` 連結。
+- verify `FAIL` → 讀 log 判斷是程式的錯還是腳本／環境的錯。程式的錯直接退回 `*-rd`（附 verify 報告路徑），不必先跑 review；腳本／環境的錯由 lead 修正後重跑。
+
+**2. 審查**：verify PASS（或專案無法自動驗證）後，以**背景執行**：
 
 ```bash
 bin/review <proj> <專案目錄名> <slug> <模型> [輪次]
@@ -132,6 +153,9 @@ bin/review <proj> <專案目錄名> <slug> <模型> [輪次]
 - 跑在 `codex exec -s read-only`：沙箱保證唯讀，不會有核准畫面，不必盯。每次審查都是新實例（獨立性較好）；第 2 輪起會先讀前幾輪報告，並 append 到同一份 review 檔。
 - 結束時腳本代寫 `DONE review-rd <proj> <slug> <檔> PASS|FAIL …`；codex 失敗則寫 `BLOCKED`，log 在 `$TEAM_STATE/.logs/`。
 - `RESULT` 為 `UNKNOWN` 時，lead 自己讀報告判斷，不要直接當 PASS。
+- 有同一 fp 的 verify 結果時，`bin/review` 會把它交給 review-rd 當依據；沒有時 review-rd 會把編譯與測試列為「未能審查」。
+
+**3. 結案前**：`bin/fingerprint <proj> <slug>` 必須印 `OK`（目前工作區 = 最後一次 DONE = verify = review 的 fp）。`MISMATCH` 就不能結案：查出是誰改了工作區，重新走 DONE → verify → review。
 
 ### 2.7 上下文管理（任務間重開）
 
@@ -173,6 +197,7 @@ lead 的對話回合不會自己醒來，所以**派工當下就要設好監看*
 - 逾時 → 印 `TIMEOUT` 與各 agent 畫面最後一行
 
 watch 一結束就會通知 lead。**處理完該事件後立刻重開 watch**，直到沒有 agent 在跑。多個 agent 同時在跑，一支 watch 就涵蓋全部。
+watch 的讀取位置存在 `$TEAM_STATE/.logs/watch.offset`：lead 處理事件的空檔裡寫進來的 DONE／BLOCKED，重開 watch 時會立刻回報，不會漏。同一時間只開一支 watch。
 
 - 畫面出現 `Compacting context` 是正常現象，不是卡住。
 - 畫面出現額度提示（如 `5h limit: NN% left`）是 codex 帳號額度。剩不到 20% 且還有大量工作時要告知使用者。
@@ -183,10 +208,12 @@ watch 一結束就會通知 lead。**處理完該事件後立刻重開 watch**�
 
 | 事件 | lead 自己做 |
 |---|---|
-| `*-rd` DONE | 讀 handoff → 抽驗實際 diff → 背景執行 `bin/review` |
+| `*-rd` DONE | 讀 handoff → 抽驗實際 diff → 背景執行 `bin/verify` |
+| verify DONE `PASS` | 背景執行 `bin/review` |
+| verify DONE `FAIL` | 讀 verify 報告與 log：程式的錯 → 退回原 `*-rd`；腳本／環境的錯 → lead 修正後重跑 |
 | review DONE `FAIL` | 判斷是 agent 的錯還是任務書的錯（任務書的錯要先更正任務書）→ 寫退回說明檔 → `bin/send` 退回原 `*-rd`，更新同一份 handoff |
-| review DONE `PASS` | 任務書狀態改結案、移到 `tasks/done/` → 彙整回報使用者 |
-| `*-rd` / review BLOCKED | 先判斷是否為環境假象；是就解除並告知 agent（或重跑 review），否則整理成選項問使用者 |
+| review DONE `PASS` | `bin/fingerprint` 確認 OK → 整理教訓（§4.1）→ 任務書狀態改結案、移到 `tasks/done/` → 彙整回報使用者 |
+| `*-rd` / verify / review BLOCKED | 先判斷是否為環境假象；是就解除並告知 agent（或重跑）。指紋不符 = DONE 後工作區又被改：問清楚是 agent 還是使用者改的，請 agent 重新寫 handoff 與 DONE。其餘整理成選項問使用者 |
 | `APPROVAL` | 依 3.2 處理 |
 | `TRUST` | **一定要問使用者**（安全決定），同意才送 Enter；`bin/send` 在此狀態會拒絕送字 |
 | `EXITED` | `bin/peek` 看原因（沙箱、信任提示、當掉）→ 修正後 `bin/spawn-agent` 在原 window 重開；任務進行中則依 2.7「進行中被迫重開」 |
@@ -246,3 +273,16 @@ watch 一結束就會通知 lead。**處理完該事件後立刻重開 watch**�
 4. **需要使用者決定什麼** — 列選項，不要自己假設
 
 專案有特殊的驗證限制（例如無法自動編譯）時，另依 PROJECTS.md 明講。
+「驗證了什麼」要分清楚：`bin/verify` 實際重跑的、review 靜態審過的、只有 agent 自述的，三者分開寫。
+
+### 4.1 教訓回流（每個任務結案時）
+
+教訓沒變成規則，下一個任務就會再犯一次。結案前 lead 要：
+
+1. 讀 handoff「教訓」、review 報告「教訓」，以及每一輪的 Blocker／Major，找出「role 或任務書沒寫清楚」造成的問題。
+2. 每一條在 `$TEAM_STATE/LESSONS.md`「待處理」加一行，決定去向（優先順序見該檔）：
+   - 專案層級（role 的專案硬規範、不准做，或 PROJECTS.md）：lead 直接補上並註明 `（來源：<proj>-<slug>，<日期>）`，再把該行移到「已處理」。專案硬規範同時是 review-rd 的必查清單，所以補了之後審查會越來越準。
+   - 框架層級（AGENT.md、範本、`bin/`）：列進回報的「需要你決定」，使用者同意後才改，並照 GIT-COMMIT.md commit。
+   - 不處理：寫明理由後移到「已處理」。
+3. 同一條教訓第二次出現 = 上次的去向沒有效：換一個更前面的去向，或改腳本讓它不可能再發生。
+4. 回報使用者時附上這次新增的規則（一行一條）。

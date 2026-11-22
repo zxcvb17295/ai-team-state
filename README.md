@@ -59,8 +59,11 @@ ln -s "$PWD/skills/ai-team" ~/.claude/skills/ai-team    # 你的 ~/.claude/skill
 | `bin/send <agent> <msg>` | 送訊息並確認送出 |
 | `bin/peek <agent> [n]` | 看畫面 |
 | `bin/wait-pane <agent> <regex> [秒]` | 等畫面出現字樣 |
-| `bin/watch [秒]` | 背景監看：DONE/BLOCKED、核准畫面、codex 退出、逾時 |
+| `bin/watch [秒]` | 背景監看：DONE/BLOCKED、核准畫面、codex 退出、逾時（讀取位置跨次保留，不漏事件） |
+| `bin/verify <proj> <slug>` | lead 在交件工作區的乾淨複本重跑編譯與測試（`verify/<proj>.sh`），寫報告並代寫事件 |
+| `bin/verify <proj> --approve` | 讀過驗證腳本後登記其 hash；腳本被改過就拒跑 |
 | `bin/review <proj> <dir> <slug> <model> [輪]` | 唯讀沙箱審查，寫報告並代寫事件 |
+| `bin/fingerprint <proj> <slug>` | 比對目前工作區與 DONE／verify／review 的指紋；結案前必跑 |
 | `bin/event <TYPE> …` | 寫 EVENTS.log（agent 與腳本共用） |
 
 ## 檔案流向（都在 `$TEAM_STATE`）
@@ -68,9 +71,12 @@ ln -s "$PWD/skills/ai-team" ~/.claude/skills/ai-team    # 你的 ~/.claude/skill
 ```
 tasks/<proj>-<slug>.md          ← lead 寫，agent 讀；結案移到 tasks/done/
 handoff/<proj>-rd-<slug>.md     ← <proj>-rd 寫，review-rd + lead 讀
+handoff/verify-<proj>-<slug>.md ← bin/verify 寫（lead 重跑的編譯與測試），review-rd + lead + <proj>-rd 讀
 handoff/review-<proj>-<slug>.md ← bin/review 寫（review-rd 的輸出），lead + <proj>-rd 讀
+verify/<proj>.sh                ← lead 寫，bin/verify 執行（hash 登記在 $TEAM_ROOT/.local/，不進版控）
+LESSONS.md                      ← lead 寫：每個任務的教訓與去向
 EVENTS.log                      ← bin/event append，bin/watch 監看
-.logs/                          ← 啟動 prompt、review 的 codex 輸出
+.logs/                          ← 啟動 prompt、review／verify 的輸出、watch.offset
 ```
 
 同一個任務從頭到尾用**同一個 `<slug>`**（不含專案前綴）。被退回修正時**更新原 handoff**，不要新增檔案。
@@ -85,12 +91,15 @@ EVENTS.log                      ← bin/event append，bin/watch 監看
 
 ```
 2026-01-01 14:02:11 START api-rd api login-timeout - 已讀任務書，開始
-2026-01-01 14:32:05 DONE api-rd api login-timeout handoff/api-rd-login-timeout.md 新增逾時設定，已編譯與測試通過
-2026-01-01 15:10:41 DONE review-rd api login-timeout handoff/review-api-login-timeout.md FAIL 1 Blocker 0 Major 2 Minor
+2026-01-01 14:32:05 DONE api-rd api login-timeout handoff/api-rd-login-timeout.md 新增逾時設定，已編譯與測試通過 fp=3f2a9c01be47
+2026-01-01 14:40:12 DONE verify api login-timeout handoff/verify-api-login-timeout.md PASS exit=0 fp=3f2a9c01be47
+2026-01-01 15:10:41 DONE review-rd api login-timeout handoff/review-api-login-timeout.md FAIL 1 Blocker 0 Major 2 Minor fp=3f2a9c01be47
 2026-01-01 15:48:02 BLOCKED web-rd web login-page handoff/web-rd-login-page.md 等 api 的 response 欄位定義
 ```
 
-事件類型：`START`（已讀任務書）/ `DONE`（完成；review 的摘要以 `PASS`／`FAIL` 開頭）/ `BLOCKED`（卡住，需 lead 決定）。
+事件類型：`START`（已讀任務書）/ `DONE`（完成；verify、review 的摘要以 `PASS`／`FAIL` 開頭）/ `BLOCKED`（卡住，需 lead 決定）。
+
+`fp=<12 碼>` 是工作區指紋：`<proj>-rd` 的 DONE 由 `bin/event` 自動加上，verify／review 記下自己跑的是哪個版本。三者相同才代表驗證與審查的就是最後交件的程式碼（`bin/fingerprint` 比對）。
 
 ## 目錄
 
@@ -100,12 +109,15 @@ ai-team-state/                 # TEAM_ROOT（版控）
 ├── team.env.example           # team.env 不進版控
 ├── bin/                       # 腳本（bash 3.2 相容）
 ├── roles/review-rd.md
-└── templates/                 # PROJECTS.md、role-rd.md、task.md、handoff-rd.md、handoff-review.md
+├── .local/                    # bin/verify 登記的腳本 hash（不進版控）
+└── templates/                 # PROJECTS.md、LESSONS.md、role-rd.md、task.md、handoff-rd.md、handoff-review.md、verify.sh
 
 $TEAM_STATE/                   # 你的資料（不進版控）
 ├── PROJECTS.md
+├── LESSONS.md
 ├── EVENTS.log
 ├── roles/<proj>-rd.md
+├── verify/<proj>.sh
 ├── tasks/  tasks/done/
 ├── handoff/
 └── .logs/

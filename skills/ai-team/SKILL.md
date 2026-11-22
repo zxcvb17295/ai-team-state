@@ -38,6 +38,6 @@ cd -P "<本 skill 的 base directory>" && dirname "$(dirname "$(pwd)")"
 
 參數：`$ARGUMENTS`
 
-- **空白或「狀態」** → 依 `AGENT.md` §4 回報現況：在跑的 agent（`bin/peek`）、`tasks/` 下未結案任務書的狀態、最近的事件、需要使用者判斷的事。回報完就停。
-- **「加專案 …」** → 依 `AGENT.md` §0「新增專案」。缺的欄位（目錄名、建構方式、一句話定位、編譯與測試指令、會讓 agent 做錯的規則）逐項問使用者。完成條件：PROJECTS.md 有該列、該專案 role 沒有殘留 `<...>`（不適用的小節已刪）。
-- **其他內容** → 當作使用者給的 issue，從 `AGENT.md` §0 第 6 步開始走 §1～§4。`PROJECTS.md` 還沒有任何專案時，先走「加專案」。完成條件：已依 §4 回報，且有背景 `bin/watch` 在監看，或任務已結案。
+- **空白或「狀態」** → 依 `AGENT.md` §4 回報現況：在跑的 agent（`bin/peek`）、`tasks/` 下未結案任務書的狀態、最近的事件、`LESSONS.md`「待處理」的教訓、需要使用者判斷的事。回報完就停。
+- **「加專案 …」** → 依 `AGENT.md` §0「新增專案」。缺的欄位（目錄名、建構方式、一句話定位、編譯與測試指令、會讓 agent 做錯的規則）逐項問使用者。完成條件：PROJECTS.md 有該列、該專案 role 沒有殘留 `<...>`（不適用的小節已刪）、`verify/<proj>.sh` 已填好並經使用者確認後 `bin/verify <proj> --approve`（無法自動驗證的專案保留範本並在 PROJECTS.md 註明）。
+- **其他內容** → 當作使用者給的 issue，從 `AGENT.md` §0 第 6 步開始走 §1～§4。`PROJECTS.md` 還沒有任何專案時，先走「加專案」。完成條件：已依 §4 回報，且有背景 `bin/watch` 在監看，或任務已結案（`bin/fingerprint` 為 OK、教訓已依 §4.1 處理）。

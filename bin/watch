@@ -10,13 +10,26 @@
 #   TRUST     某個 *-rd 停在「Trust this folder?」：必須問使用者
 #   TIMEOUT   逾時；附上各 agent 畫面最後一行，lead 判斷後再重開 watch
 # 啟動時就已存在的 APPROVAL / EXITED 也會立刻回報：處理完再重開 watch。
+#
+# EVENTS.log 的讀取位置存在 $TEAM_STATE/.logs/watch.offset，只有回報 EVENT 後才往前推：
+# 兩次 watch 之間（lead 處理上一個事件時）寫進來的 DONE / BLOCKED，下一次 watch 一開始就會回報，不會漏。
+# 第一次執行（沒有 offset 檔）從目前結尾開始，不重播舊事件。
 
 . "$(dirname "$0")/_lib.sh"
 need_state
 
 timeout="${1:-1800}"
 interval=5
-start_lines="$(wc -l < "$EVENTS" | tr -d ' ')"
+offset_file="$TEAM_STATE/.logs/watch.offset"
+mkdir -p "$(dirname "$offset_file")"
+total_lines() { wc -l < "$EVENTS" | tr -d ' '; }
+
+offset="$(cat "$offset_file" 2>/dev/null || true)"
+case "$offset" in ''|*[!0-9]*) offset="$(total_lines)"; echo "$offset" > "$offset_file" ;; esac
+if [ "$offset" -gt "$(total_lines)" ]; then
+  warn "EVENTS.log 比上次讀到的位置短（被截斷或換檔？），從目前結尾重新開始"
+  offset="$(total_lines)"; echo "$offset" > "$offset_file"
+fi
 elapsed=0
 
 agents() {
@@ -24,10 +37,12 @@ agents() {
 }
 
 while :; do
-  new="$(tail -n "+$((start_lines + 1))" "$EVENTS" | grep -E '^[0-9-]+ [0-9:]+ (DONE|BLOCKED) ' || true)"
+  total="$(total_lines)"
+  new="$(sed -n "$((offset + 1)),${total}p" "$EVENTS" | grep -E '^[0-9-]+ [0-9:]+ (DONE|BLOCKED) ' || true)"
   if [ -n "$new" ]; then
     echo "EVENT"
     echo "$new"
+    echo "$total" > "$offset_file"   # 已回報才推進；只看到 START 不推進也不會重複回報 START
     exit 0
   fi
 

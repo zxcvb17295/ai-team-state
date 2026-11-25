@@ -22,6 +22,7 @@ git --no-optional-locks status --short
 git diff <base commit>            # base commit 見任務書「派工基準」
 git diff <base commit> --stat
 git diff <base commit> -- <檔案>
+git rev-parse HEAD
 cat / grep / rg / sed -n
 ```
 
@@ -29,7 +30,7 @@ cat / grep / rg / sed -n
 
 1. **讀 handoff** — agent **宣稱**改了什麼。
 2. **讀任務書** — 原本**要求**做什麼、哪些規則不准違反，以及「派工基準」（base commit、派工前已存在的改動）。
-3. **看實際差異**（這步不能跳）：`git status --short` 與 `git diff <base commit>`。
+3. **看實際差異**（這步不能跳）：`git --no-optional-locks status --short` 與 `git diff <base commit>`。
    派工前已存在的改動不算本任務；若同一檔案兩者混在一起分不開，寫進「未能審查的部分」。
 
    > **handoff 與實際 diff 不一致，一律 Major 以上：**

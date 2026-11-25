@@ -31,7 +31,7 @@ Claude Code 不能在前景 `sleep`；需要等待一律用 `bin/wait-pane`（�
 2. `bin/init-state`：建立／檢查 `TEAM_STATE`。它若警告 `TEAM_STATE` 在 git repo 內且未被忽略，先跟使用者處理，不要繼續。
 3. 確認 `tmux -V`（需 3.2 以上）、`codex --version`。不在 PATH 就先解決環境，不要硬跑。
 4. 讀 `$TEAM_STATE/PROJECTS.md`。還有 `<...>` 未填就問使用者。`ls $PROJ_ROOT` 確認列的專案目錄都在；不在就問，**不要自己猜或自己 clone**。
-5. `tmux list-windows -t $TMUX_SESSION` 看現有 agent；`tail -30 $TEAM_STATE/EVENTS.log` 與 `tasks/` 下各任務書的「狀態」看上次進度。
+5. `tmux -L <TMUX_SOCKET> list-windows -t <TMUX_SESSION>` 看現有 agent（`TMUX_SOCKET` 為空時省略 `-L`）；`tail -30 $TEAM_STATE/EVENTS.log` 與 `tasks/` 下各任務書的「狀態」看上次進度。
 6. **向使用者確認本次 issue／涉及專案**。**分支由 lead 或使用者在派工前切好**（agent 不准 checkout）；要 lead 切分支屬 git 操作，先問。
 
 ### 專案與 agent 對照
@@ -67,7 +67,7 @@ Claude Code 不能在前景 `sleep`；需要等待一律用 `bin/wait-pane`（�
 
 - 會**誤導後人或讓對外行為不準確**的（例：註解寫錯理由、錯誤訊息用詞不一致、測試強度不足以保護關鍵邏輯）→ 一併修掉，再 commit。
 - 純風格、不影響正確性與維護的 → 記進 handoff，不另開一輪。
-- 只改註解文字與測試強度、邏輯不動的修正，可由 lead 驗證 diff 即可，不必再走整輪 review；只要動到邏輯，一律重審。
+- 只改註解文字與測試強度、邏輯不動的修正，也要由原 `*-rd` 更新 handoff、重新 DONE，再跑 `bin/verify` 與下一輪 `bin/review`：`bin/fingerprint` 要求目前工作區與 DONE、verify、review 的 fp 相同才能結案（§2.6 第 3 點）。
 - 若 Minor 的成因是 lead 的任務書寫錯，先更正任務書，再派工修，並在任務書裡寫明正確理由，避免 reviewer 照舊說法審。
 
 命名：`<slug>` 用任務簡稱（kebab-case，如 `login-timeout`），**不含專案前綴**，全程沿用。跨專案時各專案用同一個 slug 沒關係，所有檔名與事件都帶 `<proj>`。
@@ -104,7 +104,7 @@ bin/spawn-agent <proj> <專案目錄名> <模型> <slug>
 - session 不存在時，第一個 agent 直接建立 session，不會留下空的預設 window。
 - 腳本最多等 30 秒並印出畫面。腳本以 `NEED_USER_TRUST` 結束（exit 3）代表停在信任提示，腳本沒有送出任何按鍵。看到：
   - `Working` → 已開工；agent 讀完任務書會回報 `START`。
-  - `Trust this folder?` → 選了會永久儲存且可自動執行程式碼。**這是使用者的安全決定，lead 不可代選**：先用 AskUserQuestion 問，同意才送 `Enter`（`tmux send-keys -t $TMUX_SESSION:<agent> Enter`）。
+  - `Trust this folder?` → 選了會永久儲存且可自動執行程式碼。**這是使用者的安全決定，lead 不可代選**：先用 AskUserQuestion 問，同意才送 `Enter`（`tmux -L <TMUX_SOCKET> send-keys -t <TMUX_SESSION>:<agent> Enter`，值見 team.env；`TMUX_SOCKET` 為空時省略 `-L`）。
   - `Ignoring --add-dir` 或回到 shell → 沙箱參數有問題，查明再重開，不要硬跑。
 
 ### 2.4 送訊息給執行中的 agent

@@ -1,0 +1,168 @@
+#!/usr/bin/env bash
+# bin/logic — 以唯讀沙箱跑一次 logic-rd（codex exec -s read-only），請用背景執行
+#
+#   bin/logic <proj|-> <slug> <模型> <effort> [輪次=1] [專案目錄名...]
+#
+# - <proj> 寫問題涉及的專案簡稱；跨多個專案或不屬單一專案寫「-」。
+# - 專案目錄名（$PROJ_ROOT 底下）為選填；要指定專案目錄名時，[輪次] 不可省略（必須是不含前導零的正整數）：
+#   - 省略專案目錄名且 <proj> 非「-」：自動檢查 $PROJ_ROOT/<proj> 作為單一專案目錄。
+#   - 省略專案目錄名且 <proj> 為「-」：以 $PROJ_ROOT 為工作目錄，依問題書範圍查核。
+#   - 指定 1 個專案目錄名：以 -C "$PROJ_ROOT/<目錄名>" 執行。
+#   - 指定多個專案目錄名：以 -C "$PROJ_ROOT" 執行，並在 prompt 列出所有目標專案絕對路徑。
+# - 不使用 --add-dir（-s read-only 已可唯讀存取檔案系統，--add-dir 用於寫入授權），
+#   工作目錄不在 git repo 內時自動加 --skip-git-repo-check。
+# - 每次查核都是全新的 codex（第 2 輪起會先讀前幾輪報告），由沙箱保證唯讀、不會出現核准畫面。
+# - 報告取自 codex 的最後回覆（-o）：第 1 輪建立 handoff/logic-<slug>.md，第 2 輪起 append 到同一檔。
+# - 結束後代寫 EVENTS.log：DONE logic-rd[@<ws>] <proj> <slug> handoff/logic-<slug>.md <摘要>；失敗寫 BLOCKED。
+# - 完整輸出存在 $LOGS/logic-<slug>-r<N>.log。
+# - 可用於派工前，不要求 tasks/<proj>-<slug>.md 或工作區指紋（fp）。
+
+. "$(dirname "$0")/_lib.sh"
+need_state
+need_proj_root
+
+usage() {
+  die "用法：bin/logic <proj|-> <slug> <模型> <effort> [輪次=1] [專案目錄名...]"
+}
+
+[ $# -ge 4 ] || usage
+proj="$1" slug="$2" model="$3" effort="$4"
+shift 4
+
+case "$proj" in
+  ''|*/*|*[[:space:]]*) die "proj 格式不合法：$proj" ;;
+esac
+case "$slug" in
+  ''|*/*|*[[:space:]]*) die "slug 格式不合法：$slug" ;;
+esac
+[ -n "$model" ] || die "未指定模型（必須先問使用者，不可省略）"
+check_effort "$effort"
+
+round=1
+if [ $# -ge 1 ]; then
+  round="$1"
+  shift
+fi
+case "$round" in
+  ''|0*|*[!0-9]*) die "輪次必須是不含前導零的正整數（1, 2, ...）：${round}（若要指定專案目錄名，請寫在輪次之後）" ;;
+esac
+
+dir_count=0
+first_dir=""
+target_lines=""
+
+add_dir() {
+  local d="$1"
+  case "$d" in
+    ''|.|..|*/*) die "專案目錄名不可含路徑分隔字元：$d" ;;
+  esac
+  [ -d "$PROJ_ROOT/$d" ] || die "專案目錄不存在：$PROJ_ROOT/$d"
+  dir_count=$((dir_count + 1))
+  [ -n "$first_dir" ] || first_dir="$d"
+  target_lines="${target_lines}  - $PROJ_ROOT/$d
+"
+}
+
+if [ $# -gt 0 ]; then
+  for d in "$@"; do
+    add_dir "$d"
+  done
+elif [ "$proj" != "-" ]; then
+  if [ -d "$PROJ_ROOT/$proj" ]; then
+    add_dir "$proj"
+  else
+    die "找不到專案目錄 $PROJ_ROOT/$proj；若目錄名與 <proj> 不同，請在輪次後指定專案目錄名（例：bin/logic $proj $slug $model $effort $round <專案目錄名>）"
+  fi
+fi
+
+role_file="$TEAM_ROOT/roles/logic-rd.md"
+task="$TEAM_STATE/tasks/logic-$slug.md"
+report="$TEAM_STATE/handoff/logic-$slug.md"
+report_rel="handoff/logic-$slug.md"
+log="$LOGS/logic-$slug-r$round.log"
+out="$LOGS/logic-$slug-r$round.out.md"
+log_rel="${log#$TEAM_STATE/}"
+
+[ -f "$role_file" ] || die "找不到 role：$role_file"
+[ -f "$task" ]      || die "找不到問題書：$task"
+command -v "$CODEX_BIN" >/dev/null || die "找不到 codex：$CODEX_BIN"
+
+if [ "$round" -eq 1 ]; then
+  [ ! -e "$report" ] || die "第 1 輪但報告已存在：${report}（第 2 輪起請指定輪次）"
+else
+  [ -f "$report" ] || die "第 $round 輪但找不到前一輪報告：$report"
+fi
+
+if [ "$dir_count" -eq 1 ]; then
+  exec_cwd="$PROJ_ROOT/$first_dir"
+  scope_block="- 專案：${proj}，專案目錄：$exec_cwd"
+elif [ "$dir_count" -gt 1 ]; then
+  exec_cwd="$PROJ_ROOT"
+  scope_block="$(printf -- '- 專案：%s，工作目錄：%s\n- 查核專案目錄：\n%s' "$proj" "$exec_cwd" "$target_lines")"
+else
+  exec_cwd="$PROJ_ROOT"
+  scope_block="- 專案：跨專案或不限單一專案（工作目錄：$exec_cwd，依問題書範圍查閱對應專案）"
+fi
+
+proj_role_line=""
+if [ "$proj" != "-" ] && [ -f "$TEAM_STATE/roles/$proj-rd.md" ]; then
+  proj_role_line="- 專案 role（可供參考專案硬規範）：$TEAM_STATE/roles/$proj-rd.md"
+fi
+
+prev_line=""
+round_hint="請依 roles/logic-rd.md 輸出完整報告（含「# logic-${slug}」與「## 第 1 問」）。"
+if [ "$round" -gt 1 ]; then
+  prev_line="- 前幾輪查核報告：${report}（先讀它，本輪只輸出「## 第 $round 問」一節）"
+  round_hint="請先讀前幾輪查核報告與問題書新增的「第 $round 問」，本輪只輸出「## 第 $round 問」一節（會 append 到原報告後面）。"
+fi
+
+prompt="$(cat <<EOF
+請先閱讀 $role_file，並全程遵守其中規範。然後執行一次邏輯查核：
+
+- 查核輪次：第 $round 問
+$scope_block
+- 問題書：$task
+$proj_role_line
+$prev_line
+
+你在唯讀沙箱裡，不能寫任何檔案。$round_hint
+報告請直接作為你的最後一則回覆輸出（完整 Markdown），
+最後一行固定為：SUMMARY: <一句話總結各問題結論>
+EOF
+)"
+
+event_agent="$(ws_agent logic-rd)"
+blocked() { "$TEAM_ROOT/bin/event" BLOCKED "$event_agent" "$proj" "$slug" - "$*"; exit 1; }
+
+need_skip_git=0
+if ! git -C "$exec_cwd" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  need_skip_git=1
+fi
+
+mkdir -p "$LOGS" "$TEAM_STATE/handoff"
+rm -f "$out"
+echo "邏輯查核中：$proj $slug 第 $round 問（模型 ${model}，effort ${effort}，cwd=${exec_cwd}），log：$log"
+
+set +e
+if [ "$need_skip_git" = 1 ]; then
+  "$CODEX_BIN" exec -m "$model" -c "model_reasoning_effort=\"$effort\"" -s read-only --skip-git-repo-check -C "$exec_cwd" -o "$out" "$prompt" </dev/null >"$log" 2>&1
+else
+  "$CODEX_BIN" exec -m "$model" -c "model_reasoning_effort=\"$effort\"" -s read-only -C "$exec_cwd" -o "$out" "$prompt" </dev/null >"$log" 2>&1
+fi
+rc=$?
+set -e
+
+if [ "$rc" -ne 0 ] || [ ! -s "$out" ]; then
+  blocked "codex exec 失敗 rc=${rc}，見 $log_rel"
+fi
+
+summary="$({ grep -E '^SUMMARY: ' "$out" || true; } | tail -1 | sed 's/^SUMMARY: //')"
+[ -n "$summary" ] || summary="第 ${round} 問查核完成"
+
+if [ "$round" -eq 1 ]; then
+  cp "$out" "$report"
+else
+  { printf '\n\n---\n\n'; cat "$out"; } >> "$report"
+fi
+
+"$TEAM_ROOT/bin/event" DONE "$event_agent" "$proj" "$slug" "$report_rel" "$summary"

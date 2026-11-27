@@ -12,7 +12,10 @@
 | 專案 cwd | `{{PROJ_ROOT}}/{{PROJ_DIR}}` |
 | 分支 | `{{BRANCH}}`（已由 lead／使用者切好，**不准 checkout 或建立分支**） |
 | slug | `{{SLUG}}` |
+| 引擎 | `codex ／ claude ／ agy（派工前由使用者指定）` |
 | 模型 | `{{MODEL}}` |
+| effort | `（派工前由使用者指定，不可省略）` |
+| 工作線 | {{TEAM_WS_INFO}} |
 | issue | `#<id>` 或 N/A |
 | 建立時間 | {{DATE}} |
 
@@ -46,6 +49,7 @@ review 以此為基準判斷哪些改動是本任務造成的。**不要修改�
 
 ## 必讀文件
 
+- 共用規範：`{{TEAM_ROOT}}/roles/_rd-common.md`
 - 專案 role：`{{TEAM_STATE}}/roles/{{PROJ}}-rd.md`
 - 專案架構規範：`<路徑>`（見 PROJECTS.md）
 - 專案自帶：`{{PROJ_ROOT}}/{{PROJ_DIR}}/AGENTS.md`（若存在）
@@ -94,20 +98,22 @@ handoff 檔：`{{TEAM_STATE}}/handoff/{{PROJ}}-rd-{{SLUG}}.md`（格式見 `{{TE
 
 ## 回報（EVENTS.log）
 
+> 若在工作線（`TEAM_WS=<ws>`）下執行，`<agent>` 欄一律填 `{{PROJ}}-rd@<ws>`（不用裸 `{{PROJ}}-rd`），lead 靠它分辨工作線。
+
 讀完本任務書、開始動手前：
 
 ```bash
-'{{TEAM_ROOT}}/bin/event' START {{PROJ}}-rd {{PROJ}} {{SLUG}} - 已讀任務書，開始
+'{{TEAM_ROOT}}/bin/event' START {{EVENT_AGENT}} {{PROJ}} {{SLUG}} - 已讀任務書，開始
 ```
 
 完成後：
 
 ```bash
-'{{TEAM_ROOT}}/bin/event' DONE {{PROJ}}-rd {{PROJ}} {{SLUG}} handoff/{{PROJ}}-rd-{{SLUG}}.md <一句話摘要>
+'{{TEAM_ROOT}}/bin/event' DONE {{EVENT_AGENT}} {{PROJ}} {{SLUG}} handoff/{{PROJ}}-rd-{{SLUG}}.md <一句話摘要>
 ```
 
 卡住時：
 
 ```bash
-'{{TEAM_ROOT}}/bin/event' BLOCKED {{PROJ}}-rd {{PROJ}} {{SLUG}} handoff/{{PROJ}}-rd-{{SLUG}}.md <卡在哪>
+'{{TEAM_ROOT}}/bin/event' BLOCKED {{EVENT_AGENT}} {{PROJ}} {{SLUG}} handoff/{{PROJ}}-rd-{{SLUG}}.md <卡在哪>
 ```

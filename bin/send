@@ -4,33 +4,124 @@
 #   bin/send <agent> <訊息...>
 #
 # 長內容請寫成檔案，再送「請讀 <絕對路徑>」。訊息裡的路徑要寫絕對路徑。
-# 確認方式：畫面出現 WORKING_PATTERN。沒出現就補送一次 Enter；仍沒有就 exit 1。
+# 確認方式：畫面出現該引擎的工作中字樣（working_pat）。沒出現時重檢狀態，並只在目前底部輸入區仍是自己的訊息時才補送一次 Enter；仍沒有就 exit 1 並印畫面。
+# 拒送：引擎已退出、停在信任提示或核准畫面（印出目前畫面並 exit 1）。
 
 . "$(dirname "$0")/_lib.sh"
 
 [ $# -ge 2 ] || die "用法：bin/send <agent> <訊息...>"
 agent="$1"; shift
 msg="$*"
-window_exists "$agent" || die "找不到 window：$TMUX_SESSION:$agent"
-# 送到 shell 會被當指令執行；送到信任提示的 Enter 會替使用者按下「信任」
-pane_is_shell "$agent" && die "$agent 的 codex 已退出（window 在 shell），不送訊息。請看 bin/peek $agent"
-pane_waiting_on "$agent" "$TRUST_PATTERN" && die "$agent 停在信任提示，不送訊息。這需要使用者決定"
+agent_exists "$agent" || die "找不到 agent：$agent（session $TMUX_SESSION；有工作線要帶 TEAM_WS）"
 
-tmux send-keys -t "$TMUX_SESSION:$agent" -l "$msg"
+engine="$(pane_engine "$agent")"
+working="$(working_pat "$engine")"
+approval="$(approval_pat "$engine")"
+
+reject() {
+  echo "錯誤：$*" >&2
+  pane_tail "$agent" 15 >&2
+  exit 1
+}
+
+guard_pane() {
+  local action="$1"
+  if pane_is_shell "$agent"; then
+    reject "$agent 的引擎（$engine）已退出（pane 在 shell），${action}。請看 bin/peek $agent"
+  fi
+  if pane_waiting_on "$agent" "$TRUST_PATTERN"; then
+    reject "$agent 停在信任提示，${action}。這需要使用者決定"
+  fi
+  if pane_waiting_on "$agent" "$approval"; then
+    reject "$agent 停在核准畫面（$engine），${action}。請先依 AGENT.md §3.2 處理"
+  fi
+}
+
+# 確認目前底部輸入區仍是自己剛送的訊息（排除核准選單、歷史對話行與其他提示）：
+# 1. 在最後 6 個非空行中找最後一個提示符（❯ / › / >）開頭的行
+# 2. 去掉提示符與空白後，行首必須精確等於訊息首行前 12 字元（避免子字串誤中「› 1. Yes, proceed」）
+# 3. 該行之後（至多 3 行）只允許整行吻合的 TUI 框線、各引擎（codex／claude／agy）底部狀態列，
+#    或首行未顯示完的接續折行；出現其他輸出或選項即視為歷史行，不補送 Enter
+input_has_msg() {
+  local line head
+  line="${msg%%$'\n'*}"
+  head="${line:0:12}"
+  [ -n "$head" ] || return 1
+  pane_tail "$agent" 6 | MSG_LINE="$line" MSG_HEAD="$head" awk '
+    { lines[++n] = $0 }
+    END {
+      head = ENVIRON["MSG_HEAD"]
+      full = ENVIRON["MSG_LINE"]
+      sub(/[[:space:]]+$/, "", head)
+      if (length(head) == 0) exit 1
+      idx = 0
+      for (i = 1; i <= n; i++) {
+        if (lines[i] ~ /^[[:space:]]*(❯|›|>)/) idx = i
+      }
+      if (idx == 0) exit 1
+      if (n - idx > 3) exit 1
+      body = lines[idx]
+      sub(/^[[:space:]]*(❯|›|>)[[:space:]]*/, "", body)
+      if (substr(body, 1, length(head)) != head) exit 1
+      body_t = body
+      sub(/[[:space:]]+$/, "", body_t)
+      rem = ""
+      if (length(body_t) < length(full) && substr(full, 1, length(body_t)) == body_t) {
+        rem = substr(full, length(body_t) + 1)
+      }
+      for (i = idx + 1; i <= n; i++) {
+        s = lines[i]
+        if (s ~ /^[[:space:]]*(─|━|═|╭|╮|╰|╯|-)+[[:space:]]*$/) continue
+        if (s ~ /^[[:space:]]*\? for shortcuts(([[:space:]]+|([[:space:]]*·[[:space:]]*))[0-9]+% (context )?left)?[[:space:]]*$/) continue
+        if (s ~ /^[[:space:]]*[0-9]+% context left[[:space:]]*$/) continue
+        if (s ~ /^[[:space:]]*[A-Za-z0-9._-]+([[:space:]]+[A-Za-z0-9._-]+)?[[:space:]]*·[[:space:]]*[0-9]+% (context )?left([[:space:]]*·[[:space:]]*(~|\/)[^[:cntrl:]]*)?[[:space:]]*$/) continue
+        # claude 底部狀態列（整行錨定）
+        if (s ~ /^[[:space:]]*((⏵|▶|»)+[[:space:]]*)?auto mode on([[:space:]]*\(shift\+tab to cycle\))?[[:space:]]*$/) continue
+        # agy 底部狀態列（整行錨定）
+        if (s ~ /^[[:space:]]*auto[[:space:]]*·[[:space:]]*[A-Za-z0-9._-]+([[:space:]]*·[[:space:]]*(low|medium|high|xhigh|max))?[[:space:]]*$/) continue
+        if (s ~ /^[[:space:]]*Auto mode:[[:space:]]*edits & safe commands auto-approved[[:space:]]*$/) continue
+        if (s ~ /^[[:space:]]*esc to cancel([[:space:]]*·[[:space:]]*\? for shortcuts)?[[:space:]]*$/) continue
+        if (length(rem) > 0) {
+          sub(/^[[:space:]]+/, "", rem)
+          t = s
+          sub(/^[[:space:]]+/, "", t)
+          sub(/[[:space:]]+$/, "", t)
+          if (length(t) > 0 && substr(rem, 1, length(t)) == t) {
+            rem = substr(rem, length(t) + 1)
+            continue
+          }
+        }
+        exit 1
+      }
+      exit 0
+    }'
+}
+
+# 送到 shell 會被當指令執行；送到信任提示或核准畫面的按鍵可能替使用者放行
+guard_pane "不送訊息"
+
+t="$(agent_target "$agent")"
+tmux send-keys -t "$t" -l -- "$msg"
 sleep 1
-tmux send-keys -t "$TMUX_SESSION:$agent" Enter
+tmux send-keys -t "$t" Enter
 
-if "$TEAM_ROOT/bin/wait-pane" "$agent" "$WORKING_PATTERN" 8 >/dev/null 2>&1; then
+if "$TEAM_ROOT/bin/wait-pane" "$agent" "$working" 8 >/dev/null 2>&1; then
   echo "已送出，agent 工作中"
   exit 0
 fi
 
-# Enter 可能被吃掉：補一次
-tmux send-keys -t "$TMUX_SESSION:$agent" Enter
-if "$TEAM_ROOT/bin/wait-pane" "$agent" "$WORKING_PATTERN" 8; then
-  echo "已送出（補送 Enter 後），agent 工作中"
-  exit 0
+# 等待期間畫面可能已退出或切入信任／核准畫面，補送 Enter 前重新檢查狀態
+guard_pane "不補送 Enter"
+
+# Enter 可能被吃掉：只有在目前底部輸入區仍是自己訊息的開頭時才補一次 Enter
+if input_has_msg; then
+  tmux send-keys -t "$t" Enter
+  if "$TEAM_ROOT/bin/wait-pane" "$agent" "$working" 8 >/dev/null 2>&1; then
+    echo "已送出（補送 Enter 後），agent 工作中"
+    exit 0
+  fi
 fi
 
-echo "未確認送出：請用 bin/peek $agent 檢查（訊息是否停在輸入框、是否停在核准畫面）" >&2
+echo "未確認送出：訊息可能停在輸入框、已經跑完（很短的回覆），或停在其他畫面。目前畫面：" >&2
+pane_tail "$agent" 15 >&2
 exit 1

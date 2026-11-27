@@ -1,61 +1,205 @@
 #!/usr/bin/env bash
-# bin/spawn-agent — 開（或在原 window 重開）一個開發 agent，並直接帶入 role 與任務書
+# bin/spawn-agent — 開（或在原 pane 重開）一個開發 agent，並直接帶入共用與專案 role、任務書
 #
-#   bin/spawn-agent <proj> <專案目錄名> <模型> <slug>
+#   bin/spawn-agent <proj> <專案目錄名> <codex|claude|agy> <模型> <effort> <slug>
+#   TEAM_WS=<ws> bin/spawn-agent <proj> <專案目錄名> <codex|claude|agy> <模型> <effort> <slug>
 #
-# - agent 名稱固定為 <proj>-rd，window 名稱同名。
-# - session 不存在：用第一個 agent 直接建立 session（不會留下空的預設 window）。
-# - window 已存在且 codex 已退出回 shell：在同一 window 重開（保留目錄設定）。
-# - window 已存在且 codex 仍在跑：拒絕。
-# - 啟動後等待最多 30 秒，印出畫面。看到 Trust this folder? 時，lead 必須先問使用者。
+# - agent 名稱固定為 <proj>-rd，放在 session 的 agents window（一角色一 pane，pane 選項 @role=<agent>、@engine=<engine>）。
+# - 引擎支援 codex、claude、agy：
+#   - agy 的 <模型> 用不帶 effort 的名稱（如 gemini-4-neon），啟動前檢查 hook 已註冊與 agy models 清單。
+#   - claude／agy 的 <effort> 僅允許 low/medium/high/xhigh/max；codex 維持非空且 [A-Za-z0-9_-]。
+# - 工作線：TEAM_WS=<ws> 時開在 session ${TMUX_SESSION_BASE}-<ws>，不設就是 ${TMUX_SESSION_BASE}（AGENT.md §0）。
+# - 專案鎖：同角色若正在其他工作線執行（非 shell），拒絕啟動。
+# - session／agents window 不存在就建立；該角色 pane 已存在且引擎已退出回 shell：在原 pane 重開；仍在跑則拒絕。
+# - 有工作線時，初始 prompt 會指示 agent 寫 EVENTS.log 時 <agent> 欄填 <proj>-rd@<ws>。
+# - 第一次派工（$LOGS/watch.offset 不存在或為空）先記下目前 EVENTS.log 行數，避免漏掉開 watch 前的事件。
+# - 啟動後等待最多 90 秒，stdout 第一行固定印出狀態代號：
+#     0  STARTED <agent>           已開工
+#     3  NEED_USER_TRUST <agent>   停在信任提示（使用者的安全決定，本腳本未送任何按鍵）
+#     4  APPROVAL <agent>          停在核准畫面
+#     5  EXITED <agent>            15 秒內未啟動，或啟動後已退出回 shell
+#     6  TIMEOUT / IGNORED_ADD_DIR / AGY_FALLBACK
+#                                  逾時未確認開工、codex 忽略 --add-dir，或 agy 換成其他模型
+#     1  （stderr 錯誤訊息）        參數或環境錯誤
 
 . "$(dirname "$0")/_lib.sh"
 need_state
 need_proj_root
 
-[ $# -eq 4 ] || die "用法：bin/spawn-agent <proj> <專案目錄名> <模型> <slug>"
-proj="$1" dir="$2" model="$3" slug="$4"
+[ $# -eq 6 ] || die "用法：bin/spawn-agent <proj> <專案目錄名> <codex|claude|agy> <模型> <effort> <slug>"
+proj="$1" dir="$2" engine="$3" model="$4" effort="$5" slug="$6"
 agent="$proj-rd"
 cwd="$PROJ_ROOT/$dir"
+common_role="$TEAM_ROOT/roles/_rd-common.md"
 role="$TEAM_STATE/roles/$agent.md"
 task="$TEAM_STATE/tasks/$proj-$slug.md"
 
+case "$engine" in codex|claude|agy) ;; *) die "引擎只能是 codex、claude 或 agy：$engine" ;; esac
 [ -n "$model" ] || die "未指定模型（必須先問使用者，不可省略）"
-[ -d "$cwd" ]   || die "專案目錄不存在：$cwd"
-[ -f "$role" ]  || die "找不到 role：$role"
-[ -f "$task" ]  || die "找不到任務書：$task"
-command -v "$CODEX_BIN" >/dev/null || die "找不到 codex：$CODEX_BIN"
+check_effort "$engine" "$effort"
+[ -d "$cwd" ]         || die "專案目錄不存在：$cwd"
+[ -f "$common_role" ] || die "找不到共用 role：$common_role"
+[ -f "$role" ]        || die "找不到 role：$role"
+[ -f "$task" ]        || die "找不到任務書：$task"
 
-prompt_file="$TEAM_STATE/.logs/$agent.prompt"
-mkdir -p "$TEAM_STATE/.logs"
+case "$engine" in
+  codex)  engine_bin="$CODEX_BIN" ;;
+  claude) engine_bin="$CLAUDE_BIN" ;;
+  agy)    engine_bin="$AGY_BIN" ;;
+esac
+command -v "$engine_bin" >/dev/null || die "找不到 ${engine} 執行檔：$engine_bin"
+
+if [ "$engine" = agy ]; then
+  # 啟動前先確認 hook 已註冊，避免開了 pane 才秒退
+  need_agy_hook
+  # agy 遇到不存在的模型或不相容的 effort 不會退出，而是換成別的模型繼續跑，所以啟動前先查清單
+  agy_models_raw="$("$AGY_BIN" models 2>/dev/null)" ||
+    die "agy models 失敗（未登入？請先執行 $AGY_BIN 登入）"
+  agy_models="$(printf '%s\n' "$agy_models_raw" | awk '{print $1}')"
+  if ! printf '%s\n' "$agy_models" | grep -qxF -- "${model}-${effort}"; then
+    hint="$(printf '%s\n' "$agy_models" | grep -E -- '-(low|medium|high|xhigh|max)$' |
+      sed -E 's/-(low|medium|high|xhigh|max)$/ \1/' |
+      awk '{e[$1]=e[$1] (e[$1]?"/":"") $2} END{for (m in e) print "  " m "：" e[m]}' | sort || true)"
+    die "agy 沒有 ${model} 的 ${effort} 版本（模型名稱不要帶 effort）。可用的組合：
+$hint"
+  fi
+fi
+
+other="$(role_live_elsewhere "$agent")"
+[ -z "$other" ] || die "$agent 的引擎正在 session $other 執行（同一個專案工作區不能兩條工作線同時改）。等那邊結束，或改派到同一條工作線"
+
+prompt_file="$LOGS/$agent.prompt"
+mkdir -p "$LOGS"
 cat > "$prompt_file" <<EOF
-請先閱讀 ${role}，並全程遵守其中規範。
+請先閱讀 ${common_role} 與 ${role}，並全程遵守其中規範。
 讀完後接著讀任務書 $task 並依指示執行。
 EOF
+if [ -n "$TEAM_WS" ]; then
+  cat >> "$prompt_file" <<EOF
+用 bin/event 寫 EVENTS.log 時，<agent> 欄一律填 ${agent}@${TEAM_WS}（不是 ${agent}；role 檔與任務書寫 ${agent} 的地方也照此替換），lead 靠它分辨工作線。
+EOF
+fi
 
-# tmux window 的 shell 不會繼承本行程的環境，TEAM_ENV 要明確帶入
-launch="TEAM_ENV='$TEAM_ENV' '$TEAM_ROOT/bin/_codex-tui' '$model' '$prompt_file'"
+q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+# tmux pane 的 shell 不會繼承本行程的環境，TEAM_ENV、TEAM_WS 與 AGY_HOOKS_FILE 要明確帶入
+launch="TEAM_ENV=$(q "$TEAM_ENV") TEAM_WS=$(q "$TEAM_WS") AGY_HOOKS_FILE=$(q "$AGY_HOOKS_FILE") $(q "$TEAM_ROOT/bin/_launch") $(q "$agent") $(q "$engine") $(q "$model") $(q "$effort") $(q "$prompt_file")"
 
-if ! tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
-  tmux new-session -d -s "$TMUX_SESSION" -n "$agent" -c "$cwd"
-elif window_exists "$agent"; then
-  pane_is_shell "$agent" || die "window $agent 的 codex 仍在執行。同一任務進行中不重開；要重開請先讓 codex 結束（AGENT.md §2.7）"
-  echo "window $agent 已存在且在 shell，於原 window 重開"
-  tmux send-keys -t "$TMUX_SESSION:$agent" -l "cd '$cwd'"
-  tmux send-keys -t "$TMUX_SESSION:$agent" Enter
+win="=$TMUX_SESSION:=$AGENTS_WIN"
+new_win=0
+if t="$(agent_target "$agent")"; then
+  pane_is_shell "$agent" || die "$agent 的引擎仍在執行。同一任務進行中不重開；要重開請先讓引擎結束（AGENT.md §2.7）"
+  echo "$agent 的 pane 已存在且在 shell，於原 pane 重開" >&2
+  tmux send-keys -t "$t" -l -- "cd $(q "$cwd") && clear"
+  tmux send-keys -t "$t" Enter
+elif ! tmux has-session -t "=$TMUX_SESSION" 2>/dev/null; then
+  # -x/-y：detached session 預設只有 80x24，切 pane 後每格太小，引擎畫面會擠壞；使用者 attach 後會跟著視窗大小調整
+  t="$(tmux new-session -d -P -F '#{pane_id}' -s "$TMUX_SESSION" -n "$AGENTS_WIN" -x 240 -y 64 -c "$cwd")"
+  new_win=1
+elif ! { tmux list-windows -t "=$TMUX_SESSION" -F '#{window_name}' 2>/dev/null || true; } | grep -qxF -- "$AGENTS_WIN"; then
+  t="$(tmux new-window -d -P -F '#{pane_id}' -t "=$TMUX_SESSION:" -n "$AGENTS_WIN" -c "$cwd")"
+  new_win=1
 else
-  tmux new-window -d -t "$TMUX_SESSION" -n "$agent" -c "$cwd"
+  if ! t="$(tmux split-window -d -P -F '#{pane_id}' -t "$win" -c "$cwd")"; then
+    sock_hint=""
+    [ -z "$TMUX_SOCKET" ] || sock_hint=" -L $TMUX_SOCKET"
+    die "agents window 切不出新 pane（空間不足？）。請先關掉已結案、停在 shell 的 pane：tmux${sock_hint} kill-pane -t <pane id>（可用 tmux${sock_hint} list-panes -s -t =$TMUX_SESSION -F '#{pane_id} #{@role} #{@engine}' 查詢）"
+  fi
+  tmux select-layout -t "$win" "$TEAM_LAYOUT" >/dev/null
+  tmux set-option -w -t "$win" pane-border-format ' #{@role} · #{@engine} '
 fi
-
-tmux send-keys -t "$TMUX_SESSION:$agent" -l "$launch"
-tmux send-keys -t "$TMUX_SESSION:$agent" Enter
-
-echo "已啟動 ${agent}（模型 ${model}），等待畫面…"
-"$TEAM_ROOT/bin/wait-pane" "$agent" "$WORKING_PATTERN|$TRUST_PATTERN|Ignoring --add-dir|$APPROVAL_PATTERN" 30 || true
-
-if pane_waiting_on "$agent" "$TRUST_PATTERN"; then
-  echo ""
-  echo "NEED_USER_TRUST ${agent}：codex 詢問是否信任 ${cwd}。"
-  echo "這是使用者的安全決定：lead 必須先問使用者，同意後才送 Enter。本腳本未送出任何按鍵。"
-  exit 3
+if [ "$new_win" = 1 ]; then
+  tmux set-option -w -t "$win" pane-border-status top
+  tmux set-option -w -t "$win" pane-border-format ' #{@role} · #{@engine} '
 fi
+tmux set-option -p -t "$t" @role "$agent"
+tmux set-option -p -t "$t" @engine "$engine"
+
+# watch 還沒有讀取位置時，先記下派工前的 EVENTS.log 行數：agent 在 lead 開 watch 前寫的事件不會漏
+offset_file="$LOGS/watch.offset"
+touch "$EVENTS"
+if [ ! -s "$offset_file" ]; then
+  wc -l < "$EVENTS" | tr -d ' ' > "$offset_file"
+fi
+sleep 1   # 讓新 pane 的 shell 先起來
+
+tmux send-keys -t "$t" -l -- "$launch"
+tmux send-keys -t "$t" Enter
+
+echo "已啟動 ${agent}（${engine} / 模型 ${model} / effort ${effort}，session ${TMUX_SESSION}，pane ${t}），等待畫面…" >&2
+
+working="$(working_pat "$engine")"
+approval="$(approval_pat "$engine")"
+adddir_tries=0
+started=0
+i=0
+while [ "$i" -lt 90 ]; do
+  i=$((i + 1))
+  sleep 1
+  # 剛送出指令時前景仍是 shell：先等到前景換成引擎，之後再回到 shell 才算啟動後退出
+  if pane_is_shell "$agent"; then
+    if [ "$started" = 1 ]; then
+      echo "EXITED ${agent}：${engine} 啟動後已退出回 shell，請看下方畫面或執行 bin/peek ${agent}"
+      pane_tail "$agent" 20
+      exit 5
+    elif [ "$i" -ge 15 ]; then
+      echo "EXITED ${agent}：15 秒內 ${engine} 未啟動（前景仍是 shell），請看下方畫面或執行 bin/peek ${agent}"
+      pane_tail "$agent" 20
+      exit 5
+    fi
+    continue
+  fi
+  started=1
+
+  if pane_waiting_on "$agent" "$TRUST_PATTERN"; then
+    echo "NEED_USER_TRUST ${agent}：${engine} 詢問是否信任 ${cwd}。選了會永久儲存。"
+    echo "這是使用者的安全決定：lead 必須先問使用者，同意後才操作（claude 預設游標在 No，agy 與 codex 預設在 Yes，見 AGENT.md §2.3）。本腳本未送出任何按鍵。"
+    pane_tail "$agent" 20
+    exit 3
+  fi
+  if [ "$engine" = claude ] && pane_waiting_on "$agent" "$ADDDIR_PATTERN"; then
+    adddir_tries=$((adddir_tries + 1))
+    if [ "$adddir_tries" -gt 3 ]; then
+      echo "TIMEOUT ${agent}：claude --add-dir 提示處理 3 次仍未通過"
+      pane_tail "$agent" 20
+      exit 6
+    fi
+    # 預設游標在 No, exit；Down 偶爾被吃掉或被當成 Esc，所以每次只送一鍵並確認游標
+    for _ in 1 2 3; do
+      if pane_tail "$agent" 15 | { grep '❯' || true; } | tail -1 | grep -q 'Yes'; then
+        break
+      fi
+      tmux send-keys -t "$t" Down
+      sleep 1
+    done
+    if pane_tail "$agent" 15 | { grep '❯' || true; } | tail -1 | grep -q 'Yes'; then
+      tmux send-keys -t "$t" Enter
+      echo "（--add-dir 提示：已選 Yes）" >&2
+      sleep 2
+    fi
+    continue
+  fi
+  if pane_waiting_on "$agent" "$approval"; then
+    echo "APPROVAL ${agent}：停在核准畫面（${engine}，請依 AGENT.md §3.2 處理）"
+    pane_tail "$agent" 25
+    exit 4
+  fi
+  if [ "$engine" = agy ] && { pane "$agent" || true; } | grep -Eq -- "$AGY_FALLBACK_PATTERN"; then
+    echo "AGY_FALLBACK ${agent}：agy 未使用指定的 ${model} / ${effort}，改用了其他模型。請先送 /exit 停掉它，查明再重開"
+    { pane "$agent" || true; } | grep -E -A1 -- "$AGY_FALLBACK_PATTERN" || true
+    exit 6
+  fi
+  if [ "$engine" = codex ] && pane_tail "$agent" 30 | grep -qF -- 'Ignoring --add-dir'; then
+    echo "IGNORED_ADD_DIR ${agent}：codex 忽略了 --add-dir，沙箱參數有問題，agent 寫不到 handoff。查明再重開"
+    pane_tail "$agent" 20
+    exit 6
+  fi
+  if pane_tail "$agent" 8 | grep -Eq -- "$working"; then
+    echo "STARTED ${agent}：工作中（${engine}）。讀完任務書會寫 START 到 EVENTS.log。"
+    pane_tail "$agent" 12
+    exit 0
+  fi
+done
+
+echo "TIMEOUT ${agent}：90 秒內未確認開工（${engine}），請看下方畫面或執行 bin/peek ${agent}"
+pane_tail "$agent" 20
+exit 6

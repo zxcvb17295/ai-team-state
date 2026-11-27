@@ -6,7 +6,7 @@
 
 ## 環境
 
-執行環境：macOS，直接使用 tmux（3.2 以上）與 codex CLI。
+執行環境：macOS，直接使用 tmux（3.2 以上）與要用到的引擎 CLI（`codex`／`claude`／`agy`；`bin/review` 與 `bin/logic` 需 `codex`）。
 
 ## 專案與 agent 對照
 
@@ -14,6 +14,7 @@
 |-------|------|--------------------------|------|-----------|
 | `<proj>-rd` | `<專案名>` | `<專案目錄名>` | `<Maven / npm / Gradle / ...>` | `<這個專案是做什麼的>` |
 | `review-rd` | （唯讀全專案） | — | — | 由 `bin/review` 以唯讀沙箱執行，每次審查一個新實例 |
+| `logic-rd` | （唯讀全專案） | — | — | lead 需要查邏輯時用 `bin/logic` 派工（不在固定流程內） |
 
 新增專案：在表內加一列，並執行 `bin/new-role <proj> <目錄名>` 後填寫該 role。
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # bin/review — 以唯讀沙箱跑一次 review-rd（codex exec -s read-only），請用背景執行
 #
-#   bin/review <proj> <專案目錄名> <slug> <模型> [輪次=1]
+#   bin/review <proj> <專案目錄名> <slug> <模型> <effort> [輪次=1]
 #
 # - 每次審查都是全新的 codex（第 2 輪起會先讀上一輪報告），由沙箱保證唯讀、不會出現核准畫面。
 # - 報告取自 codex 的最後回覆（-o）：第 1 輪建立 review 檔，第 2 輪起 append 到同一檔。
-# - 結束後由本腳本代寫 EVENTS.log：DONE review-rd <proj> <slug> <檔> PASS|FAIL …；失敗寫 BLOCKED。
-# - codex 的完整輸出存在 $TEAM_STATE/.logs/review-<proj>-<slug>-r<N>.log
+# - 結束後由本腳本代寫 EVENTS.log：DONE review-rd[@<ws>] <proj> <slug> <檔> PASS|FAIL …；失敗寫 BLOCKED。
+# - codex 的完整輸出存在 $LOGS/review-<proj>-<slug>-r<N>.log
 # - 開審前工作區指紋必須等於 <proj>-rd 最後一次 DONE 的 fp，審完再比一次；不符寫 BLOCKED。
 #   DONE 事件帶 fp=，代表這份審查結果只對應這個版本的工作區。
 # - 有同一 fp 的 bin/verify 結果時，一併交給 review-rd 當作編譯與測試的依據。
@@ -15,9 +15,10 @@
 need_state
 need_proj_root
 
-[ $# -ge 4 ] || die "用法：bin/review <proj> <專案目錄名> <slug> <模型> [輪次]"
-proj="$1" dir="$2" slug="$3" model="$4" round="${5:-1}"
-[ -n "$model" ] || die "未指定模型"
+[ $# -ge 5 ] || die "用法：bin/review <proj> <專案目錄名> <slug> <模型> <effort> [輪次]"
+proj="$1" dir="$2" slug="$3" model="$4" effort="$5" round="${6:-1}"
+[ -n "$model" ] || die "未指定模型（必須先問使用者，不可省略）"
+check_effort "$effort"
 
 cwd="$PROJ_ROOT/$dir"
 task="$TEAM_STATE/tasks/$proj-$slug.md"
@@ -25,8 +26,10 @@ handoff="$TEAM_STATE/handoff/$proj-rd-$slug.md"
 role="$TEAM_STATE/roles/$proj-rd.md"
 report="$TEAM_STATE/handoff/review-$proj-$slug.md"
 report_rel="handoff/review-$proj-$slug.md"
-log="$TEAM_STATE/.logs/review-$proj-$slug-r$round.log"
-out="$TEAM_STATE/.logs/review-$proj-$slug-r$round.out.md"
+log="$LOGS/review-$proj-$slug-r$round.log"
+out="$LOGS/review-$proj-$slug-r$round.out.md"
+log_rel="${log#$TEAM_STATE/}"
+out_rel="${out#$TEAM_STATE/}"
 
 for f in "$task" "$handoff" "$role"; do [ -f "$f" ] || die "找不到：$f"; done
 [ -d "$cwd" ] || die "專案目錄不存在：$cwd"
@@ -36,7 +39,8 @@ else
   [ -f "$report" ] || die "第 $round 輪但找不到前一輪報告：$report"
 fi
 
-blocked() { "$TEAM_ROOT/bin/event" BLOCKED review-rd "$proj" "$slug" - "$*"; exit 1; }
+event_agent="$(ws_agent review-rd)"
+blocked() { "$TEAM_ROOT/bin/event" BLOCKED "$event_agent" "$proj" "$slug" - "$*"; exit 1; }
 
 base="$(task_base "$task")"
 [ -n "$base" ] || die "任務書缺 base commit：$task"
@@ -72,24 +76,24 @@ $prev
 EOF
 )"
 
-mkdir -p "$TEAM_STATE/.logs"
+mkdir -p "$LOGS" "$TEAM_STATE/handoff"
 rm -f "$out"
-echo "審查中：$proj $slug 第 $round 輪（模型 ${model}，fp=${fp}），log：$log"
+echo "審查中：$proj $slug 第 $round 輪（模型 ${model}，effort ${effort}，fp=${fp}），log：$log"
 
 set +e
-"$CODEX_BIN" exec -m "$model" -s read-only -C "$cwd" -o "$out" "$prompt" </dev/null >"$log" 2>&1
+"$CODEX_BIN" exec -m "$model" -c "model_reasoning_effort=\"$effort\"" -s read-only -C "$cwd" -o "$out" "$prompt" </dev/null >"$log" 2>&1
 rc=$?
 set -e
 
 if [ "$rc" -ne 0 ] || [ ! -s "$out" ]; then
-  blocked "codex exec 失敗 rc=${rc}，見 .logs/$(basename "$log")"
+  blocked "codex exec 失敗 rc=${rc}，見 $log_rel"
 fi
 
 after="$(work_fp "$cwd" "$base" || echo error)"
 [ "$after" = "$fp" ] ||
-  blocked "審查期間工作區有變動（fp $fp → ${after}），本輪報告作廢，見 .logs/$(basename "$out")"
+  blocked "審查期間工作區有變動（fp $fp → ${after}），本輪報告作廢，見 $out_rel"
 
-result="$(grep -E '^RESULT: (PASS|FAIL)' "$out" | tail -1 | sed 's/^RESULT: //')"
+result="$({ grep -E '^RESULT: (PASS|FAIL)' "$out" || true; } | tail -1 | sed 's/^RESULT: //')"
 if [ -z "$result" ]; then
   result="UNKNOWN 報告缺 RESULT 行，請 lead 人工判讀"
 fi
@@ -100,4 +104,4 @@ else
   { printf '\n\n---\n\n'; cat "$out"; } >> "$report"
 fi
 
-"$TEAM_ROOT/bin/event" DONE review-rd "$proj" "$slug" "$report_rel" "$result fp=$fp"
+"$TEAM_ROOT/bin/event" DONE "$event_agent" "$proj" "$slug" "$report_rel" "$result fp=$fp"

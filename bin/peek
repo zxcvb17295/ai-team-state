@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# bin/peek — 看 agent 畫面（去掉空行）
+# bin/peek — 看 agent 畫面（附引擎與前景程式標題列，去掉空行）
 #
 #   bin/peek <agent> [行數=30]      # 只看可見區
 #   bin/peek <agent> 200            # 行數 > 可見區時往回抓捲動歷史
@@ -8,6 +8,10 @@
 
 [ $# -ge 1 ] || die "用法：bin/peek <agent> [行數]"
 agent="$1" lines="${2:-30}"
-window_exists "$agent" || die "找不到 window：$TMUX_SESSION:$agent"
+agent_exists "$agent" || die "找不到 agent：$agent（session $TMUX_SESSION；有工作線要帶 TEAM_WS）"
 
-tmux capture-pane -p -S "-$lines" -t "$TMUX_SESSION:$agent" | grep -v '^[[:space:]]*$' | tail -n "$lines"
+t="$(agent_target "$agent")"
+engine="$(pane_engine "$agent")"
+cmd="$(tmux display-message -p -t "$t" '#{pane_current_command}' 2>/dev/null || true)"
+echo "== ${agent}（引擎：${engine}，前景：${cmd:-unknown}）"
+tmux capture-pane -p -S "-$lines" -t "$t" | { grep -v '^[[:space:]]*$' || true; } | tail -n "$lines"

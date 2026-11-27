@@ -6,8 +6,9 @@
 #   bin/event BLOCKED <agent> <proj> <slug> <檔案|-> <卡在哪...>
 #
 # review-rd / verify 的 DONE 摘要開頭固定是 PASS 或 FAIL（由 bin/review、bin/verify 代寫）。
+# logic-rd 的 DONE 由 bin/logic 代寫，不計算工作區指紋。
 #
-# 開發 agent（<proj>-rd）的 DONE 會自動在行尾加上 fp=<工作區指紋>：交件當下的工作區鎖定在這個指紋，
+# 開發 agent（<proj>-rd，含工作線 <proj>-rd@<ws>）的 DONE 會自動在行尾加上 fp=<工作區指紋>：交件當下的工作區鎖定在這個指紋，
 # bin/review、bin/verify、bin/fingerprint 會拿它比對，DONE 之後工作區再變動就會被擋下。
 
 . "$(dirname "$0")/_lib.sh"
@@ -17,7 +18,8 @@ need_state
 case "$1" in START|DONE|BLOCKED) ;; *) die "事件類型只能是 START / DONE / BLOCKED：$1" ;; esac
 
 fp_tag=""
-if [ "$1" = DONE ] && [ "$2" = "$3-rd" ]; then
+base_agent="${2%%@*}"
+if [ "$1" = DONE ] && [ "$base_agent" = "$3-rd" ] && [ "$base_agent" != "review-rd" ] && [ "$base_agent" != "logic-rd" ]; then
   task="$(task_file "$3" "$4")"
   cwd="" base="" fp=""
   if [ -f "$task" ]; then cwd="$(task_cwd "$task")"; base="$(task_base "$task")"; fi

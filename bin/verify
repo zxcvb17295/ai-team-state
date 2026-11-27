@@ -10,8 +10,8 @@
 #   原專案目錄完全不寫入。被 .gitignore 忽略的檔案（node_modules、build 輸出）不在複本裡，
 #   腳本可用環境變數 VERIFY_SRC（原專案目錄）自行連結或安裝。
 # - 開跑前工作區指紋必須等於 <proj>-rd 最後一次 DONE 的 fp；跑完再比一次。
-# - 結果寫 $TEAM_STATE/handoff/verify-<proj>-<slug>.md，並代寫 DONE verify <proj> <slug> <檔> PASS|FAIL … fp=…
-#   準備失敗（指紋不符、腳本未登記…）寫 BLOCKED。完整輸出在 $TEAM_STATE/.logs/verify-<proj>-<slug>.log
+# - 結果寫 $TEAM_STATE/handoff/verify-<proj>-<slug>.md，並代寫 DONE verify[@<ws>] <proj> <slug> <檔> PASS|FAIL … fp=…
+#   準備失敗（指紋不符、腳本未登記…）寫 BLOCKED。完整輸出在 $LOGS/verify-<proj>-<slug>.log
 
 . "$(dirname "$0")/_lib.sh"
 need_state
@@ -38,7 +38,8 @@ if [ "$2" = "--approve" ]; then
 fi
 
 slug="$2"
-blocked() { "$TEAM_ROOT/bin/event" BLOCKED verify "$proj" "$slug" - "$*"; exit 1; }
+event_agent="$(ws_agent verify)"
+blocked() { "$TEAM_ROOT/bin/event" BLOCKED "$event_agent" "$proj" "$slug" - "$*"; exit 1; }
 
 grep -qx "$proj $script_hash" "$approved_file" 2>/dev/null ||
   blocked "驗證腳本 verify/$proj.sh 未登記或登記後被改過（hash ${script_hash:0:12}）：lead 讀過內容後跑 bin/verify $proj --approve"
@@ -53,10 +54,11 @@ done_fp="$(last_event_fp DONE "$proj-rd" "$proj" "$slug")"
 [ "$fp" = "$done_fp" ] ||
   blocked "工作區指紋 $fp 與 $proj-rd 最後一次 DONE 的 fp=${done_fp:-（無）} 不同：DONE 後又改過，先讓 agent 重新交件"
 
-log="$TEAM_STATE/.logs/verify-$proj-$slug.log"
+log="$LOGS/verify-$proj-$slug.log"
+log_rel="${log#$TEAM_STATE/}"
 report="$TEAM_STATE/handoff/verify-$proj-$slug.md"
 report_rel="handoff/verify-$proj-$slug.md"
-mkdir -p "$TEAM_STATE/.logs" "$TEAM_STATE/handoff"
+mkdir -p "$LOGS" "$TEAM_STATE/handoff"
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/aiteam-verify.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
@@ -64,10 +66,10 @@ copy="$tmp/src"
 
 # 建複本：目前 HEAD + 工作區對 HEAD 的 diff + 未追蹤檔案
 head="$(git -C "$cwd" rev-parse HEAD)"
-git clone -q --shared --no-checkout "$cwd" "$copy" 2>"$log" || blocked "建立複本失敗，見 .logs/$(basename "$log")"
-git -C "$copy" -c advice.detachedHead=false checkout -q "$head" 2>>"$log" || blocked "複本 checkout 失敗，見 .logs/$(basename "$log")"
+git clone -q --shared --no-checkout "$cwd" "$copy" 2>"$log" || blocked "建立複本失敗，見 $log_rel"
+git -C "$copy" -c advice.detachedHead=false checkout -q "$head" 2>>"$log" || blocked "複本 checkout 失敗，見 $log_rel"
 if ! git -C "$cwd" --no-optional-locks diff --binary HEAD | git -C "$copy" apply --binary --allow-empty 2>>"$log"; then
-  blocked "工作區 diff 套用到複本失敗，見 .logs/$(basename "$log")"
+  blocked "工作區 diff 套用到複本失敗，見 $log_rel"
 fi
 untracked="$tmp/untracked"
 git -C "$cwd" --no-optional-locks ls-files -o --exclude-standard -z > "$untracked"
@@ -97,7 +99,7 @@ drift=""
   echo "| 時間 | $(date '+%F %T') |"
   echo "| 工作區 fp | \`$fp\` |"
   echo "| 驗證腳本 | \`verify/$proj.sh\`（hash \`${script_hash:0:12}\`） |"
-  echo "| 完整 log | \`.logs/$(basename "$log")\` |"
+  echo "| 完整 log | \`$log_rel\` |"
   [ -z "$drift" ] || echo "| 警告 | $drift |"
   echo
   echo "由 bin/verify 在交件工作區的乾淨複本中實際執行，不是 agent 自述。"
@@ -109,4 +111,4 @@ drift=""
   echo '```'
 } > "$report"
 
-"$TEAM_ROOT/bin/event" DONE verify "$proj" "$slug" "$report_rel" "$result exit=$rc fp=$fp"
+"$TEAM_ROOT/bin/event" DONE "$event_agent" "$proj" "$slug" "$report_rel" "$result exit=$rc fp=$fp"

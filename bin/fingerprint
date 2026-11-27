@@ -22,8 +22,8 @@ done_fp="$(last_event_fp DONE "$proj-rd" "$proj" "$slug")"
 verify_fp="$(last_event_fp DONE verify "$proj" "$slug")"
 review_fp="$(last_event_fp DONE review-rd "$proj" "$slug")"
 
-result() {  # 最後一筆該 agent 的 DONE 摘要開頭（PASS/FAIL…）
-  grep -E "^[0-9-]+ [0-9:]+ DONE $1 $proj $slug " "$EVENTS" 2>/dev/null | tail -1 | awk '{print $8}'
+result() {  # 最後一筆該 agent（依工作線規則）的 DONE 摘要開頭（PASS/FAIL…）
+  last_event_line DONE "$1" "$proj" "$slug" | awk '{print $8}'
 }
 
 printf '%-10s %s\n' "current" "$cur"

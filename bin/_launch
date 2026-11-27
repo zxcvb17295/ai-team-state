@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# bin/_launch — 由 bin/spawn-agent 在 tmux pane 裡呼叫，不要直接用
+#
+#   bin/_launch <role> <codex|claude|agy> <模型> <effort> <初始 prompt 檔>
+#
+# 全程用 exec：tmux 的前景程式才會是引擎本身（不是這支 bash 腳本），bin/watch 等才能正確判斷是否退出。
+# exec 只取代本腳本，引擎結束後仍回到 pane 的 shell，可在同一 pane 重開（見 AGENT.md §2.7）。
+
+. "$(dirname "$0")/_lib.sh"
+
+[ $# -eq 5 ] || die "用法：bin/_launch <role> <codex|claude|agy> <模型> <effort> <prompt 檔>"
+role="$1" engine="$2" model="$3" effort="$4" prompt_file="$5"
+case "$engine" in codex|claude|agy) ;; *) die "引擎只能是 codex、claude 或 agy：$engine" ;; esac
+[ -n "$model" ] || die "未指定模型（不可省略）"
+check_effort "$engine" "$effort"
+[ -f "$prompt_file" ] || die "找不到 prompt 檔：$prompt_file"
+prompt="$(cat "$prompt_file")"
+
+case "$engine" in
+  codex)
+    exec "$CODEX_BIN" -m "$model" \
+      -c "model_reasoning_effort=\"$effort\"" \
+      -s workspace-write \
+      -a "$CODEX_APPROVAL" \
+      --add-dir "$TEAM_STATE" \
+      --no-alt-screen \
+      "$prompt"
+    ;;
+  claude)
+    # 基本設定一律是 bootstrap/claude-rd.settings.json。專案組額外的 deny 放在 agent 寫不到的
+    # $TEAM_ROOT/.local/claude-rd.settings.json（不讀 TEAM_STATE：agent 寫得到）。
+    # 有 .local 檔時合併：permissions.deny 取聯集，其他欄位一律以基本設定為準（只能加限制，不能放寬）。
+    settings="$TEAM_ROOT/bootstrap/claude-rd.settings.json"
+    [ -f "$settings" ] || die "找不到 claude 設定檔：$settings"
+    extra="$TEAM_ROOT/.local/claude-rd.settings.json"
+    if [ -f "$extra" ]; then
+      command -v python3 >/dev/null || die "找不到 python3（合併 $extra 需要）"
+      merged="$TEAM_ROOT/.local/claude-rd.$role.merged.json"
+      python3 -I - "$settings" "$extra" "$merged" <<'EOF' || die "無法合併 claude 設定：$extra"
+import json, os, sys
+base_path, extra_path, out_path = sys.argv[1:4]
+with open(base_path, encoding="utf-8") as f:
+    base = json.load(f)
+try:
+    with open(extra_path, encoding="utf-8") as f:
+        extra = json.load(f)
+except ValueError as e:
+    sys.exit(f"錯誤：{extra_path} 不是合法 JSON：{e}")
+perms = extra.get("permissions", {}) if isinstance(extra, dict) else None
+deny = perms.get("deny", []) if isinstance(perms, dict) else None
+if not isinstance(deny, list) or not all(isinstance(d, str) for d in deny):
+    sys.exit(f"錯誤：{extra_path} 須是 JSON 物件，permissions.deny 須是字串陣列")
+if extra.keys() - {"permissions"} or perms.keys() - {"deny"}:
+    sys.stderr.write(f"警告：{extra_path} 只採用 permissions.deny，其他欄位忽略\n")
+merged = base.setdefault("permissions", {}).setdefault("deny", [])
+merged.extend(d for d in dict.fromkeys(deny) if d not in merged)
+tmp = out_path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(base, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+os.replace(tmp, out_path)
+EOF
+      settings="$merged"
+    fi
+    # prompt 放第一個位置參數：--add-dir 會吃掉後面的位置參數
+    exec "$CLAUDE_BIN" "$prompt" \
+      --model "$model" \
+      --effort "$effort" \
+      --permission-mode auto \
+      --settings "$settings" \
+      --add-dir "$TEAM_STATE"
+    ;;
+  agy)
+    # deny 清單在 bootstrap/agy-gate.py（全域 PreToolUse hook），只在 TEAM_AGY_POLICY=rd 時生效。
+    # 沒註冊就拒絕啟動，避免開發 agent 失去安全邊界（見 AGENT.md §2.3）
+    need_agy_hook
+    TEAM_AGY_POLICY=rd \
+      TEAM_AGENT_CWD="$PWD" \
+      TEAM_ROOT="$TEAM_ROOT" \
+      TEAM_STATE="$TEAM_STATE" \
+      PROJ_ROOT="$PROJ_ROOT" \
+      exec "$AGY_BIN" \
+        --model "$model" \
+        --effort "$effort" \
+        --mode auto \
+        --add-dir "$TEAM_STATE" \
+        -i "$prompt"
+    ;;
+esac

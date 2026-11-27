@@ -2,26 +2,33 @@
 # bin/watch — 監看所有開發 agent，有需要 lead 處理的事就結束（請用背景執行）
 #
 #   bin/watch [timeout 秒=1800]
+#   WATCH_IGNORE="a-rd b-rd" bin/watch    略過已結案、停在 shell 的 agent
+#   TEAM_WS=<ws> bin/watch                只看這條工作線（session ${TMUX_SESSION_BASE}-<ws>）
 #
 # 結束條件（印出第一行為事件類型）：
-#   EVENT     EVENTS.log 出現新的 DONE / BLOCKED
-#   APPROVAL  某個 *-rd 停在核准畫面（APPROVAL_PATTERN）
-#   EXITED    某個 *-rd 的 codex 已退出回 shell（沙箱拒絕、當掉…）
-#   TRUST     某個 *-rd 停在「Trust this folder?」：必須問使用者
-#   TIMEOUT   逾時；附上各 agent 畫面最後一行，lead 判斷後再重開 watch
-# 啟動時就已存在的 APPROVAL / EXITED 也會立刻回報：處理完再重開 watch。
+#   EVENT     EVENTS.log 出現新的 DONE / BLOCKED（一併列出期間的 START）
+#   APPROVAL  某個 *-rd 停在核准畫面（依引擎套用 approval_pat）
+#   EXITED    某個 *-rd 的引擎已退出回 shell（沙箱拒絕、當掉…）
+#   TRUST     某個 *-rd 停在信任提示（TRUST_PATTERN）：必須問使用者
+#   TIMEOUT   逾時；附上各 agent 引擎、工作中／閒置與畫面最後一行，lead 判斷後再重開 watch
+# 啟動時就已存在的 APPROVAL / EXITED / TRUST 也會立刻回報：處理完再重開 watch。
 #
-# EVENTS.log 的讀取位置存在 $TEAM_STATE/.logs/watch.offset，只有回報 EVENT 後才往前推：
+# EVENTS.log 的讀取位置存在 $LOGS/watch.offset（工作線各自獨立在 .logs/ws/<ws>/），只有回報 EVENT 後才往前推：
 # 兩次 watch 之間（lead 處理上一個事件時）寫進來的 DONE / BLOCKED，下一次 watch 一開始就會回報，不會漏。
-# 第一次執行（沒有 offset 檔）從目前結尾開始，不重播舊事件。
+# 第一次執行（沒有 offset 檔）從目前結尾開始，不重播舊事件（bin/spawn-agent 第一次派工會先記下位置）。
+#
+# 分線：EVENTS.log 所有工作線共用。有 TEAM_WS 時只收 agent 欄結尾為 @<ws> 的事件，
+# 以及 agent 欄不含 @、但該角色在本 session 有 pane 的事件（agent 忘了加 @ws 時的退路）。
+# 未設 TEAM_WS 時只收不含 @ 的事件。
 
 . "$(dirname "$0")/_lib.sh"
 need_state
 
 timeout="${1:-1800}"
 interval=5
-offset_file="$TEAM_STATE/.logs/watch.offset"
-mkdir -p "$(dirname "$offset_file")"
+offset_file="$LOGS/watch.offset"
+mkdir -p "$LOGS"
+touch "$EVENTS"
 total_lines() { wc -l < "$EVENTS" | tr -d ' '; }
 
 offset="$(cat "$offset_file" 2>/dev/null || true)"
@@ -32,42 +39,81 @@ if [ "$offset" -gt "$(total_lines)" ]; then
 fi
 elapsed=0
 
+# WATCH_IGNORE="a-rd b-rd"：略過已結案、停在 shell 的 agent（否則一開就回報 EXITED）
 agents() {
-  tmux list-windows -t "$TMUX_SESSION" -F '#{window_name}' 2>/dev/null | grep -- '-rd$' || true
+  local a ignore
+  ignore=" $(printf '%s' "${WATCH_IGNORE:-}" | tr '\t\n' '  ') "
+  session_agents |
+    while IFS= read -r a; do
+      [ -n "$a" ] || continue
+      case "$ignore" in
+        *" $a "*) ;;
+        *) printf '%s\n' "$a" ;;
+      esac
+    done
+}
+
+# 只留本工作線的事件行（欄位：日期 時間 類型 agent ...）
+mine() {
+  if [ -z "$TEAM_WS" ]; then
+    awk '$4 !~ /@/'
+    return
+  fi
+  local live
+  live=" $(session_agents | tr '\n' ' ') "
+  awk -v ws="@$TEAM_WS" -v live="$live" '
+    { a = $4 }
+    (length(a) > length(ws) && substr(a, length(a) - length(ws) + 1) == ws) ||
+    (a != "" && a !~ /@/ && index(live, " " a " ") > 0)
+  '
 }
 
 while :; do
   total="$(total_lines)"
-  new="$(sed -n "$((offset + 1)),${total}p" "$EVENTS" | grep -E '^[0-9-]+ [0-9:]+ (DONE|BLOCKED) ' || true)"
-  if [ -n "$new" ]; then
+  chunk=""
+  if [ "$total" -gt "$offset" ]; then
+    chunk="$(sed -n "$((offset + 1)),${total}p" "$EVENTS" | mine)"
+  fi
+  if [ -n "$chunk" ] && printf '%s\n' "$chunk" | grep -Eq '^[0-9-]+ [0-9:]+ (DONE|BLOCKED) '; then
     echo "EVENT"
-    echo "$new"
+    printf '%s\n' "$chunk" | grep -E '^[0-9-]+ [0-9:]+ (START|DONE|BLOCKED) '
     echo "$total" > "$offset_file"   # 已回報才推進；只看到 START 不推進也不會重複回報 START
     exit 0
   fi
 
   for a in $(agents); do
+    e="$(pane_engine "$a")"
     if pane_is_shell "$a"; then
       echo "EXITED $a"
-      pane "$a" | grep -v '^[[:space:]]*$' | tail -15
+      pane_tail "$a" 15
       exit 0
     fi
     if pane_waiting_on "$a" "$TRUST_PATTERN"; then
       echo "TRUST $a"
-      pane "$a" | grep -v '^[[:space:]]*$' | tail -15
+      pane_tail "$a" 15
       exit 0
     fi
-    if pane_waiting_on "$a" "$APPROVAL_PATTERN"; then
-      echo "APPROVAL $a"
-      pane "$a" | grep -v '^[[:space:]]*$' | tail -25
+    if pane_waiting_on "$a" "$(approval_pat "$e")"; then
+      echo "APPROVAL $a（$e）"
+      pane_tail "$a" 25
       exit 0
     fi
   done
 
   if [ "$elapsed" -ge "$timeout" ]; then
     echo "TIMEOUT ${timeout}s"
+    starts=""
+    if [ -n "$chunk" ]; then
+      starts="$(printf '%s\n' "$chunk" | grep -E '^[0-9-]+ [0-9:]+ START ' || true)"
+    fi
+    if [ -n "$starts" ]; then
+      echo "-- 期間的 START："
+      printf '%s\n' "$starts"
+    fi
     for a in $(agents); do
-      echo "== $a: $(pane "$a" | grep -v '^[[:space:]]*$' | tail -1)"
+      e="$(pane_engine "$a")"
+      if pane_working "$a"; then s="工作中"; else s="閒置"; fi
+      echo "== $a（$e，$s）：$(pane_tail "$a" 1)"
     done
     exit 0
   fi

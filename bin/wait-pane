@@ -9,12 +9,12 @@
 
 [ $# -ge 2 ] || die "用法：bin/wait-pane <agent> <regex> [timeout]"
 agent="$1" pattern="$2" timeout="${3:-30}"
-window_exists "$agent" || die "找不到 window：$TMUX_SESSION:$agent"
+agent_exists "$agent" || die "找不到 agent：$agent（session $TMUX_SESSION；有工作線要帶 TEAM_WS）"
 
 i=0
 while [ "$i" -lt "$timeout" ]; do
   if pane "$agent" | grep -Eq -- "$pattern"; then
-    pane "$agent" | grep -v '^[[:space:]]*$' | tail -15
+    pane_tail "$agent" 15
     exit 0
   fi
   sleep 1
@@ -22,5 +22,5 @@ while [ "$i" -lt "$timeout" ]; do
 done
 
 echo "逾時 ${timeout}s：畫面未出現 /$pattern/" >&2
-pane "$agent" | grep -v '^[[:space:]]*$' | tail -15
+pane_tail "$agent" 15
 exit 1

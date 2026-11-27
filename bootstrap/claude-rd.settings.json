@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "defaultMode": "auto",
+    "deny": [
+      "Bash(git add*)",
+      "Bash(git checkout*)",
+      "Bash(git commit*)",
+      "Bash(git stash*)",
+      "Bash(git push*)",
+      "Bash(git merge*)",
+      "Bash(git switch*)",
+      "Bash(git reset*)",
+      "Bash(git restore*)",
+      "Bash(git rm*)",
+      "Bash(git clean*)",
+      "Bash(git rebase*)",
+      "Bash(git cherry-pick*)",
+      "Bash(git revert*)",
+      "Bash(*autocrlf*)"
+    ]
+  }
+}

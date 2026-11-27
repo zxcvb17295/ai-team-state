@@ -2,9 +2,11 @@
 # bin/new-task — 從範本建立任務書，並記錄派工前的 git 基準
 #
 #   bin/new-task <proj> <專案目錄名> <slug>
+#   TEAM_WS=<ws> bin/new-task <proj> <專案目錄名> <slug>
 #   → $TEAM_STATE/tasks/<proj>-<slug>.md
 #
 # 分支必須在派工前由 lead / 使用者切好；agent 不准 checkout。
+# 執行當下若已設 TEAM_WS，任務書的「工作線」與「回報」會直接填入 <proj>-rd@<ws>；未設時維持舊版 <proj>-rd。
 
 . "$(dirname "$0")/_lib.sh"
 need_state
@@ -26,9 +28,17 @@ branch="$(git -C "$cwd" rev-parse --abbrev-ref HEAD)"
 head="$(git -C "$cwd" rev-parse HEAD)"
 status="$(git -C "$cwd" --no-optional-locks status --short)"
 
+event_agent="$(ws_agent "$proj-rd")"
+if [ -n "$TEAM_WS" ]; then
+  ws_info="\`$TEAM_WS\`（事件 agent 欄寫 \`$event_agent\`）"
+else
+  ws_info="無（若使用工作線，由 lead 補填並將下方回報的 agent 欄改為 \`$proj-rd@<ws>\`）"
+fi
+
 dest="$TEAM_STATE/tasks/$proj-$slug.md"
 render "$TEAM_ROOT/templates/task.md" "$dest" \
   "PROJ=$proj" "PROJ_DIR=$dir" "SLUG=$slug" "BRANCH=$branch" "BASE_HEAD=$head" \
+  "EVENT_AGENT=$event_agent" "TEAM_WS_INFO=$ws_info" \
   "MODEL=${DEFAULT_MODEL:-（派工前由使用者指定）}" "DATE=$(date '+%F %T')"
 
 # 多行內容（派工前已存在的改動）用 awk 換掉佔位行
